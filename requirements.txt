@@ -1,0 +1,6 @@
+pandas
+requests
+tqdm
+joblib
+ratelimit
+backoff
