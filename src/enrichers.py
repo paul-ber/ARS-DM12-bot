@@ -50,9 +50,13 @@ class MeteoEnricher:
         # (Le reste du parsing reste identique...)
         return {
             "temp_c": hourly["temperature_2m"][idx],
-            # ...
+            "precip_mm": hourly["precipitation"][idx],
+            "rain_mm": hourly["rain"][idx],
+            "snow_cm": hourly["snowfall"][idx],
+            "visibility_m": hourly["visibility"][idx],
+            "wind_kmh": hourly["windspeed_10m"][idx],
+            "weather_code": hourly["weathercode"][idx]
         }
-
 class OverpassEnricher:
     #BASE_URL = "https://overpass-api.de/api/interpreter"
     BASE_URL = "https://overpass.private.coffee/api/interpreter"
