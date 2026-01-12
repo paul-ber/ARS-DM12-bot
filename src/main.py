@@ -15,7 +15,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(processName)s %(name)s - %(message)s",
     handlers=[
         logging.StreamHandler(),                # Console
@@ -25,8 +25,8 @@ logging.basicConfig(
 logger = logging.getLogger("DM12")
 
 # --- CONFIGURATION ---
-SAMPLE_SIZE = 5  # None = Tout charger
-OUTPUT_JSON = True  # Sauvegarder aussi en JSON ?
+SAMPLE_SIZE = 50  # None = Tout charger
+OUTPUT_JSON = False  # Sauvegarder aussi en JSON ?
 OUTPUT_FILE = "data/output/accidents_enriched.json"
 
 SEND_TO_ELK = False
@@ -59,23 +59,23 @@ def main():
     # 4. Boucle avec batch
     batch = []
     all_results = [] if OUTPUT_JSON else None  # Pour le fichier JSON final (optionnel)
-    
+
     print("Enrichissement et envoi par batch...")
 
     for index, row in tqdm(df.iterrows(), total=len(df)):
-        
+
         # Enrichissement (identique)
         date_str = row['timestamp'].strftime('%Y-%m-%d')
         hour = row['timestamp'].hour
 
-        meteo_data = None
-        if pd.notna(row['lat']) and pd.notna(row['long']) and row['lat'] != 0 and row['long'] != 0:
-            try:
-                meteo_data = MeteoEnricher.get_weather(row['lat'], row['long'], date_str, hour)
-            except Exception as e:
-                logger.warning(f"Erreur météo pour accident {row['num_acc']}: {e}")
-        else:
-            logger.debug(f"Pas de GPS pour accident {row['num_acc']}, météo ignorée")
+        # meteo_data = None
+        # if pd.notna(row['lat']) and pd.notna(row['long']) and row['lat'] != 0 and row['long'] != 0:
+        #     try:
+        #         meteo_data = MeteoEnricher.get_weather(row['lat'], row['long'], date_str, hour)
+        #     except Exception as e:
+        #         logger.warning(f"Erreur météo pour accident {row['num_acc']}: {e}")
+        # else:
+        #     logger.debug(f"Pas de GPS pour accident {row['num_acc']}, météo ignorée")
 
         infra_data = None
         if pd.notna(row['lat']) and pd.notna(row['long']) and row['lat'] != 0 and row['long'] != 0:
@@ -99,7 +99,7 @@ def main():
                 "agglo": int(row.get('agglo', row.get('agg', 0))),
                 "gravite_globale": row.get('gravite_accident', 'Inconnu')
             },
-            "meteo_reelle": meteo_data,
+            #"meteo_reelle": meteo_data,
             "infrastructure_env": infra_data,
             "raw_baac": {
                 "col": row.get('col'),
@@ -107,9 +107,9 @@ def main():
                 "atm": row.get('atm')
             }
         }
-        
+
         batch.append(enriched_doc)
-        
+
         if OUTPUT_JSON:
             all_results.append(enriched_doc)
 
@@ -120,7 +120,7 @@ def main():
                     pusher.push_documents(batch)
                 except Exception as e:
                     print(f"Erreur push batch : {e}")
-            
+
             batch = []  # Vide le batch
 
     # 5. Envoi du dernier batch (qui est < BATCH_SIZE)

@@ -8,7 +8,7 @@ class ElasticPusher:
         """
         self.es = Elasticsearch([f"http://{host}:{port}"])
         self.index_name = index_name
-        
+
         # Test connexion
         if not self.es.ping():
             raise ConnectionError(f"❌ Impossible de se connecter à Elasticsearch sur {host}:{port}")
@@ -21,7 +21,7 @@ class ElasticPusher:
         if self.es.indices.exists(index=self.index_name):
             print(f"ℹ️  Index '{self.index_name}' existe déjà.")
             return
-        
+
         # Mapping optimisé pour Kibana
         mapping = {
             "mappings": {
@@ -65,7 +65,7 @@ class ElasticPusher:
                 }
             }
         }
-        
+
         self.es.indices.create(index=self.index_name, body=mapping)
         print(f"✅ Index '{self.index_name}' créé avec mapping optimisé.")
 
@@ -80,7 +80,7 @@ class ElasticPusher:
                     "lat": doc["location"]["lat"],
                     "lon": doc["location"]["lon"]
                 }
-        
+
         # Bulk insert (performant)
         actions = [
             {
@@ -90,7 +90,7 @@ class ElasticPusher:
             }
             for doc in documents
         ]
-        
+
         success, failed = helpers.bulk(self.es, actions, stats_only=True)
         print(f"📤 Push terminé : {success} documents envoyés, {failed} échecs.")
         return success, failed
