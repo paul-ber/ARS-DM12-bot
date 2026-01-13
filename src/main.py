@@ -8,6 +8,10 @@ import os
 import argparse
 import sys
 import numpy as np
+from dotenv import load_dotenv
+
+# Charger les variables d'environnement
+load_dotenv()
 
 # --- LOGGING GLOBAL ---
 import logging
@@ -119,6 +123,20 @@ def parse_args():
     )
 
     parser.add_argument(
+    "--elk-user",
+    type=str,
+    default=os.getenv("ELK_USER"),
+    help="Username Elasticsearch"
+    )
+
+    parser.add_argument(
+        "--elk-password",
+        type=str,
+        default=os.getenv("ELK_PASSWORD"),
+        help="Password Elasticsearch"
+    )
+
+    parser.add_argument(
         "--elk-index",
         type=str,
         default="accidents-routiers",
@@ -212,7 +230,9 @@ def main():
             pusher = ElasticPusher(
                 host=args.elk_host,
                 port=args.elk_port,
-                index_name=args.elk_index
+                index_name=args.elk_index,
+                user=args.elk_user,
+                password=args.elk_password
             )
             pusher.create_index_if_not_exists()
             logger.info(f"✅ Index '{args.elk_index}' prêt")

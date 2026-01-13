@@ -7,3 +7,4 @@ ratelimit
 backoff
 elasticsearch
 numpy
+python-dotenv

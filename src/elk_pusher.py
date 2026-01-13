@@ -4,16 +4,24 @@ import logging
 logger = logging.getLogger("DM12")
 
 class ElasticPusher:
-    def __init__(self, host="localhost", port=9200, index_name="accidents-routiers"):
+    def __init__(self, host="localhost", port=9200, index_name="accidents-routiers",
+                 user=None, password=None):
         """
-        Initialise la connexion à Elasticsearch.
+        Initialise la connexion à Elasticsearch avec authentification optionnelle.
         """
-        self.es = Elasticsearch([f"http://{host}:{port}"])
+        if user and password:
+            self.es = Elasticsearch(
+                [f"http://{host}:{port}"],
+                basic_auth=(user, password)
+            )
+        else:
+            self.es = Elasticsearch([f"http://{host}:{port}"])
+
         self.index_name = index_name
 
         # Test connexion
         if not self.es.ping():
-            raise ConnectionError(f"Impossible de se connecter à Elasticsearch sur {host}:{port}")
+            raise ConnectionError(f"❌ Impossible de se connecter à Elasticsearch sur {host}:{port}")
 
         info = self.es.info()
         logger.info(f"Connecté à Elasticsearch : {info['version']['number']}")
@@ -31,7 +39,7 @@ def create_index_if_not_exists(self):
             "properties": {
                 "id_accident": {"type": "keyword"},
                 "timestamp": {"type": "date"},
-                
+
                 # CARACTERISTIQUES (objet flat avec tous les champs)
                 "caracteristiques": {
                     "properties": {
@@ -57,7 +65,7 @@ def create_index_if_not_exists(self):
                         "adr": {"type": "text"}
                     }
                 },
-                
+
                 # VÉHICULES (nested array)
                 "vehicules": {
                     "type": "nested",
@@ -75,7 +83,7 @@ def create_index_if_not_exists(self):
                         "occutc": {"type": "integer"}
                     }
                 },
-                
+
                 # USAGERS (nested array)
                 "usagers": {
                     "type": "nested",
@@ -97,7 +105,7 @@ def create_index_if_not_exists(self):
                         "etatp": {"type": "integer"}
                     }
                 },
-                
+
                 # INFRASTRUCTURE OSM
                 "infrastructure_env": {
                     "properties": {
