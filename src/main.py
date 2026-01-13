@@ -7,6 +7,7 @@ import json
 import os
 import argparse
 import sys
+import numpy as np
 
 # --- LOGGING GLOBAL ---
 import logging

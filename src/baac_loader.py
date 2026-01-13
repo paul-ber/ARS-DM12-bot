@@ -5,7 +5,6 @@ import time
 from joblib import Parallel, delayed, dump, load, hash as joblib_hash
 import logging
 from charset_normalizer import from_path
-import numpy as np
 
 logger = logging.getLogger("DM12")
 

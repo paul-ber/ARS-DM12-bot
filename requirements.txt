@@ -6,3 +6,4 @@ joblib
 ratelimit
 backoff
 elasticsearch
+numpy
