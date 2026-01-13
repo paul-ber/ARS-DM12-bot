@@ -18,74 +18,107 @@ class ElasticPusher:
         info = self.es.info()
         logger.info(f"Connecté à Elasticsearch : {info['version']['number']}")
 
-    def create_index_if_not_exists(self):
-        """
-        Crée l'index avec un mapping optimisé si il n'existe pas.
-        """
-        if self.es.indices.exists(index=self.index_name):
-            logger.info(f"Index '{self.index_name}' existe déjà.")
-            return
+def create_index_if_not_exists(self):
+    """
+    Crée l'index avec mapping optimisé pour données BAAC complètes.
+    """
+    if self.es.indices.exists(index=self.index_name):
+        logger.info(f"ℹ️  Index '{self.index_name}' existe déjà.")
+        return
 
-        # Mapping optimisé pour Kibana
-        mapping = {
-            "mappings": {
-                "properties": {
-                    "id_accident": {"type": "keyword"},
-                    "timestamp": {"type": "date"},
-                    "location": {
-                        "properties": {
-                            "coords": {"type": "geo_point"},
-                            "lat": {"type": "float"},
-                            "lon": {"type": "float"},
-                            "dep": {"type": "keyword"},
-                            "commune": {"type": "keyword"}
-                        }
-                    },
-                    "contexte": {
-                        "properties": {
-                            "type_route": {"type": "integer"},
-                            "lum": {"type": "integer"},
-                            "agglo": {"type": "integer"},
-                            "gravite_globale": {"type": "keyword"},
-                            "nb_tues": {"type": "integer"},
-                            "nb_graves": {"type": "integer"}
-                        }
-                    },
-                    "infrastructure_env": {
-                        "properties": {
-                            "radars": {"type": "integer"},
-                            "glissieres": {"type": "integer"},
-                            "ralentisseurs": {"type": "integer"},
-                            "feux": {"type": "integer"},
-                            "stops_cedez": {"type": "integer"},
-                            "passages_pietons": {"type": "integer"},
-                            "ronds_points": {"type": "integer"},
-                            "routes_principales": {"type": "integer"},
-                            "vitesse_max_moyenne": {"type": "integer"},
-                            "total": {"type": "integer"}
-                        }
-                    },
-                    "vehicules": {
-                        "properties": {
-                            "nb_vehicules": {"type": "integer"},
-                            "implique_moto": {"type": "boolean"},
-                            "implique_pl": {"type": "boolean"},
-                            "implique_velo": {"type": "boolean"}
-                        }
-                    },
-                    "raw_baac": {
-                        "properties": {
-                            "col": {"type": "integer"},
-                            "int": {"type": "integer"},
-                            "atm": {"type": "integer"}
-                        }
+    mapping = {
+        "mappings": {
+            "properties": {
+                "id_accident": {"type": "keyword"},
+                "timestamp": {"type": "date"},
+                
+                # CARACTERISTIQUES (objet flat avec tous les champs)
+                "caracteristiques": {
+                    "properties": {
+                        "lat": {"type": "float"},
+                        "long": {"type": "float"},
+                        "dep": {"type": "keyword"},
+                        "com": {"type": "keyword"},
+                        "agg": {"type": "integer"},
+                        "int": {"type": "integer"},
+                        "atm": {"type": "integer"},
+                        "col": {"type": "integer"},
+                        "lum": {"type": "integer"},
+                        "catr": {"type": "integer"},
+                        "circ": {"type": "integer"},
+                        "nbv": {"type": "integer"},
+                        "vosp": {"type": "integer"},
+                        "prof": {"type": "integer"},
+                        "plan": {"type": "integer"},
+                        "surf": {"type": "integer"},
+                        "infra": {"type": "integer"},
+                        "situ": {"type": "integer"},
+                        "vma": {"type": "integer"},
+                        "adr": {"type": "text"}
+                    }
+                },
+                
+                # VÉHICULES (nested array)
+                "vehicules": {
+                    "type": "nested",
+                    "properties": {
+                        "num_acc": {"type": "keyword"},
+                        "id_vehicule": {"type": "keyword"},
+                        "num_veh": {"type": "keyword"},
+                        "senc": {"type": "integer"},
+                        "catv": {"type": "integer"},
+                        "obs": {"type": "integer"},
+                        "obsm": {"type": "integer"},
+                        "choc": {"type": "integer"},
+                        "manv": {"type": "integer"},
+                        "motor": {"type": "integer"},
+                        "occutc": {"type": "integer"}
+                    }
+                },
+                
+                # USAGERS (nested array)
+                "usagers": {
+                    "type": "nested",
+                    "properties": {
+                        "num_acc": {"type": "keyword"},
+                        "id_vehicule": {"type": "keyword"},
+                        "num_veh": {"type": "keyword"},
+                        "place": {"type": "integer"},
+                        "catu": {"type": "integer"},
+                        "grav": {"type": "integer"},
+                        "sexe": {"type": "integer"},
+                        "an_nais": {"type": "integer"},
+                        "trajet": {"type": "integer"},
+                        "secu1": {"type": "integer"},
+                        "secu2": {"type": "integer"},
+                        "secu3": {"type": "integer"},
+                        "locp": {"type": "integer"},
+                        "actp": {"type": "keyword"},
+                        "etatp": {"type": "integer"}
+                    }
+                },
+                
+                # INFRASTRUCTURE OSM
+                "infrastructure_env": {
+                    "properties": {
+                        "radars": {"type": "integer"},
+                        "glissieres": {"type": "integer"},
+                        "ralentisseurs": {"type": "integer"},
+                        "feux": {"type": "integer"},
+                        "stops_cedez": {"type": "integer"},
+                        "passages_pietons": {"type": "integer"},
+                        "ronds_points": {"type": "integer"},
+                        "routes_principales": {"type": "integer"},
+                        "vitesse_max_moyenne": {"type": "integer"},
+                        "total": {"type": "integer"}
                     }
                 }
             }
         }
+    }
 
-        self.es.indices.create(index=self.index_name, body=mapping)
-        logger.info(f"Index '{self.index_name}' créé avec mapping optimisé.")
+    self.es.indices.create(index=self.index_name, body=mapping)
+    logger.info(f"✅ Index '{self.index_name}' créé avec mapping complet.")
 
     def push_documents(self, documents):
         """

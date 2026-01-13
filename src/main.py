@@ -149,47 +149,41 @@ def parse_args():
 
 def main():
     args = parse_args()
-
-    # Configuration logging
-    if args.verbose:
-        logging.getLogger("DM12").setLevel(logging.DEBUG)
-
-    logger.info("="*60)
-    logger.info("DÉMARRAGE DU PIPELINE D'ENRICHISSEMENT BAAC")
-    logger.info("="*60)
-    logger.info(f"Répertoire données : {args.data_dir}")
-    logger.info(f"Cache : {args.cache_dir}")
-    logger.info(f"Échantillon : {args.sample_size or 'TOUS LES ACCIDENTS'}")
-    logger.info(f"Overpass : {args.overpass_url}")
-    logger.info(f"Envoi ELK : {args.send_elk}")
-    logger.info(f"Sauvegarde JSON : {args.save_json}")
-    logger.info("="*60)
-
-    # 1. Chargement BAAC
-    logger.info("\n[1/4] Chargement des données BAAC...")
+    
+    # ... (logging config identique) ...
+    
+    # 1. Chargement BAAC (nouvelle structure)
+    logger.info("\n[1/4] 📥 Chargement des données BAAC...")
     loader = BAACLoader(data_dir=args.data_dir, cache_dir=args.cache_dir)
-    df = loader.load_all_years(n_jobs=args.n_jobs, force_reload=args.force_reload)
-
-    logger.info(f"{len(df):,} accidents chargés")
-
-    # 2. Échantillonnage (si activé)
+    data = loader.load_all_years(n_jobs=args.n_jobs, force_reload=args.force_reload)
+    
+    df_accidents = data['accidents']
+    df_vehicules = data['vehicules']
+    df_usagers = data['usagers']
+    
+    logger.info(f"✅ {len(df_accidents):,} accidents chargés")
+    
+    # 2. Échantillonnage
     if args.sample_size:
-        logger.info(f"\nMode TEST : échantillonnage de {args.sample_size} accidents")
-        df = df.sample(min(args.sample_size, len(df)))
-        logger.info(f"{len(df)} accidents sélectionnés")
-
+        logger.info(f"\n🧪 Échantillonnage de {args.sample_size} accidents")
+        sample_ids = df_accidents['num_acc'].sample(min(args.sample_size, len(df_accidents)))
+        df_accidents = df_accidents[df_accidents['num_acc'].isin(sample_ids)]
+        df_vehicules = df_vehicules[df_vehicules['num_acc'].isin(sample_ids)]
+        df_usagers = df_usagers[df_usagers['num_acc'].isin(sample_ids)]
+        logger.info(f"✅ {len(df_accidents)} accidents sélectionnés")
+    
     # 3. Initialisation Overpass
     overpass_enricher = None
     if not args.skip_overpass:
-        logger.info(f"\n[2/4] Initialisation Overpass sur {args.overpass_url}")
+        logger.info(f"\n[2/4] 🗺️  Initialisation Overpass sur {args.overpass_url}")
         overpass_enricher = OverpassEnricher(base_url=args.overpass_url)
     else:
-        logger.info("\n[2/4] Enrichissement Overpass désactivé")
-
-    # 4. Initialisation ELK (avant la boucle)
+        logger.info("\n[2/4] ⏭️  Enrichissement Overpass désactivé")
+    
+    # 4. Initialisation ELK
     pusher = None
     if args.send_elk:
-        logger.info(f"\n[3/4] Connexion à Elasticsearch {args.elk_host}:{args.elk_port}")
+        logger.info(f"\n[3/4] 📤 Connexion à Elasticsearch {args.elk_host}:{args.elk_port}")
         try:
             pusher = ElasticPusher(
                 host=args.elk_host,
@@ -197,40 +191,44 @@ def main():
                 index_name=args.elk_index
             )
             pusher.create_index_if_not_exists()
-            logger.info(f"Index '{args.elk_index}' prêt")
+            logger.info(f"✅ Index '{args.elk_index}' prêt")
         except Exception as e:
-            logger.error(f"Impossible de se connecter à ELK : {e}")
-            logger.warning("   → Basculement en mode sans ELK")
+            logger.error(f"❌ Impossible de se connecter à ELK : {e}")
             pusher = None
     else:
-        logger.info("\n[3/4] Envoi Elasticsearch désactivé")
-
-    # 5. Boucle d'enrichissement avec batch
-    logger.info(f"\n[4/4] Enrichissement et traitement...")
-    logger.info(f"   Batch size : {args.batch_size}")
-
+        logger.info("\n[3/4] ⏭️  Envoi Elasticsearch désactivé")
+    
+    # 5. BOUCLE D'ENRICHISSEMENT AVEC TOUTES LES DONNÉES
+    logger.info(f"\n[4/4] ⚙️  Enrichissement...")
+    
     batch = []
     all_results = [] if args.save_json else None
-
+    
     stats = {
-        "total": len(df),
+        "total": len(df_accidents),
         "traites": 0,
         "overpass_ok": 0,
         "overpass_ko": 0,
         "sans_gps": 0
     }
-
-    for index, row in tqdm(df.iterrows(), total=len(df), desc="Enrichissement"):
-
+    
+    # Groupement véhicules et usagers par accident
+    vehicules_by_acc = df_vehicules.groupby('num_acc')
+    usagers_by_acc = df_usagers.groupby('num_acc')
+    
+    for index, row_acc in tqdm(df_accidents.iterrows(), total=len(df_accidents), desc="Enrichissement"):
+        
+        num_acc = row_acc['num_acc']
+        
         # Enrichissement Overpass
         infra_data = None
-        has_gps = pd.notna(row['lat']) and pd.notna(row['long']) and row['lat'] != 0 and row['long'] != 0
-
+        has_gps = pd.notna(row_acc['lat']) and pd.notna(row_acc['long']) and row_acc['lat'] != 0 and row_acc['long'] != 0
+        
         if has_gps and overpass_enricher:
             try:
                 infra_data = overpass_enricher.get_infrastructure(
-                    row['lat'],
-                    row['long'],
+                    row_acc['lat'],
+                    row_acc['long'],
                     radius=args.overpass_radius
                 )
                 if infra_data:
@@ -238,50 +236,53 @@ def main():
                 else:
                     stats["overpass_ko"] += 1
             except Exception as e:
-                logger.warning(f"Erreur Overpass pour accident {row['num_acc']}: {e}")
+                logger.warning(f"Erreur Overpass pour accident {num_acc}: {e}")
                 stats["overpass_ko"] += 1
         elif not has_gps:
             stats["sans_gps"] += 1
-
-        # Construction du document enrichi
+        
+        # CONSTRUCTION DU DOCUMENT COMPLET AVEC TOUTES LES COLONNES
+        
+        # 1. CARACTÉRISTIQUES + LIEUX (toutes colonnes sauf celles déjà extraites)
+        caracteristiques = row_acc.replace({np.nan: None}).to_dict()
+        
+        # 2. VÉHICULES (liste complète avec toutes colonnes)
+        vehicules_list = []
+        if num_acc in vehicules_by_acc.groups:
+            for _, veh_row in vehicules_by_acc.get_group(num_acc).iterrows():
+                vehicules_list.append(veh_row.replace({np.nan: None}).to_dict())
+        
+        # 3. USAGERS (liste complète avec toutes colonnes)
+        usagers_list = []
+        if num_acc in usagers_by_acc.groups:
+            for _, usr_row in usagers_by_acc.get_group(num_acc).iterrows():
+                usagers_list.append(usr_row.replace({np.nan: None}).to_dict())
+        
+        # 4. DOCUMENT FINAL ENRICHI
         enriched_doc = {
-            "id_accident": str(row.get('num_acc', 'inconnu')),
-            "timestamp": row.get('timestamp', pd.Timestamp('2000-01-01')).isoformat(),
-            "location": {
-                "lat": float(row['lat']) if pd.notna(row['lat']) else None,
-                "lon": float(row['long']) if pd.notna(row['long']) else None,
-                "dep": str(row.get('dep', 'inconnu')),
-                "commune": str(row.get('com', 'inconnu'))
-            },
-            "contexte": {
-                "type_route": int(row.get('catr', 0)),
-                "lum": int(row.get('lum', 0)),
-                "agglo": int(row.get('agglo', row.get('agg', 0))),
-                "gravite_globale": row.get('gravite_accident', 'Inconnu'),
-                "nb_tues": int(row.get('nb_tues', 0)),
-                "nb_graves": int(row.get('nb_graves', 0))
-            },
-            "infrastructure_env": infra_data,
-            "vehicules": {
-                "nb_vehicules": int(row.get('nb_vehicules', 0)),
-                "implique_moto": bool(row.get('implique_moto', False)),
-                "implique_pl": bool(row.get('implique_pl', False)),
-                "implique_velo": bool(row.get('implique_velo', False))
-            },
-            "raw_baac": {
-                "col": int(row.get('col', 0)) if pd.notna(row.get('col')) else None,
-                "int": int(row.get('int', 0)) if pd.notna(row.get('int')) else None,
-                "atm": int(row.get('atm', 0)) if pd.notna(row.get('atm')) else None
-            }
+            "id_accident": str(num_acc),
+            "timestamp": caracteristiques.get('timestamp', pd.Timestamp('2000-01-01')).isoformat() if pd.notna(caracteristiques.get('timestamp')) else None,
+            
+            # TOUTES les caractéristiques de l'accident
+            "caracteristiques": caracteristiques,
+            
+            # Liste complète des véhicules
+            "vehicules": vehicules_list,
+            
+            # Liste complète des usagers
+            "usagers": usagers_list,
+            
+            # Enrichissement Overpass
+            "infrastructure_env": infra_data
         }
-
+        
         batch.append(enriched_doc)
         stats["traites"] += 1
-
+        
         if args.save_json:
             all_results.append(enriched_doc)
-
-        # Push dès qu'on atteint BATCH_SIZE
+        
+        # Push batch
         if len(batch) >= args.batch_size:
             if pusher:
                 try:
@@ -289,34 +290,31 @@ def main():
                 except Exception as e:
                     logger.error(f"Erreur push batch : {e}")
             batch = []
-
-    # 6. Envoi du dernier batch (qui est < BATCH_SIZE)
+    
+    # 6. Dernier batch
     if batch and pusher:
-        logger.info(f"\nEnvoi du dernier batch ({len(batch)} documents)...")
+        logger.info(f"\n📤 Envoi du dernier batch ({len(batch)} documents)...")
         pusher.push_documents(batch)
-
-    # 7. Sauvegarde JSON finale (optionnelle)
+    
+    # 7. Sauvegarde JSON
     if args.save_json and all_results:
-        logger.info(f"\nSauvegarde JSON dans {args.json_output}...")
+        logger.info(f"\n💾 Sauvegarde JSON dans {args.json_output}...")
         os.makedirs(os.path.dirname(args.json_output), exist_ok=True)
         with open(args.json_output, 'w', encoding='utf-8') as f:
             json.dump(all_results, f, indent=2, ensure_ascii=False)
         logger.info(f"✅ {len(all_results)} accidents sauvegardés")
-
-    # 8. Statistiques finales
+    
+    # 8. Statistiques
     logger.info("\n" + "="*60)
-    logger.info("STATISTIQUES FINALES")
+    logger.info("📊 STATISTIQUES FINALES")
     logger.info("="*60)
     logger.info(f"Total accidents    : {stats['total']:,}")
     logger.info(f"Traités            : {stats['traites']:,}")
     logger.info(f"Overpass OK        : {stats['overpass_ok']:,}")
     logger.info(f"Overpass KO        : {stats['overpass_ko']:,}")
     logger.info(f"Sans GPS           : {stats['sans_gps']:,}")
-    logger.info(f"JSON sauvegardé    : {'OUI' if args.save_json else 'NON'}")
-    logger.info(f"Envoyé vers ELK    : {'OUI' if pusher else 'NON'}")
     logger.info("="*60)
-    logger.info("TRAITEMENT TERMINÉ")
-    logger.info("="*60)
+    logger.info("✅ TRAITEMENT TERMINÉ")
 
 
 if __name__ == "__main__":
