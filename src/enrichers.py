@@ -52,8 +52,13 @@ class MeteoEnricher:
         }
 
 class OverpassEnricher:
-    BASE_URL = "https://overpass.private.coffee/api/interpreter"
-    #"https://overpass.private.coffee/api/interpreter"
+    """
+    Enrichisseur Overpass configuré pour instance locale.
+    Pas de rate limit car serveur dédié.
+    """
+
+    BASE_URL = "http://localhost:12345/api/interpreter"
+    # BASE_URL = "https://overpass.private.coffee/api/interpreter"
 
     @staticmethod
     @sleep_and_retry
@@ -61,8 +66,8 @@ class OverpassEnricher:
     @backoff.on_exception(
         backoff.expo,
         (requests.exceptions.RequestException),
-        max_tries=8,
-        factor=2
+        max_tries=3,
+        factor=1
     )
     @memory.cache
     def get_infrastructure(lat, lon, radius=1000):
