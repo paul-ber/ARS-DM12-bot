@@ -236,8 +236,8 @@ class BAACLoader:
         if not years:
             raise FileNotFoundError(f"❌ Aucune année trouvée dans {self.data_dir}/")
 
-        logger.info(f"📅 Années : {years}")
-        logger.info(f"⚡ Chargement parallèle (n_jobs={n_jobs})")
+        logger.info(f"Années : {years}")
+        logger.info(f"Chargement parallèle (n_jobs={n_jobs})")
 
         results = Parallel(n_jobs=n_jobs, verbose=10)(
             delayed(self.load_year)(year) for year in years
@@ -258,7 +258,7 @@ class BAACLoader:
         df_vehicules = pd.concat(all_vehicules, ignore_index=True)
         df_usagers = pd.concat(all_usagers, ignore_index=True)
 
-        logger.info(f"✅ TOTAL : {len(df_accidents):,} accidents, {len(df_vehicules):,} véhicules, {len(df_usagers):,} usagers")
+        logger.info(f"TOTAL : {len(df_accidents):,} accidents, {len(df_vehicules):,} véhicules, {len(df_usagers):,} usagers")
 
         # Structuration finale : dict avec les 3 DataFrames
         data = {
@@ -268,10 +268,10 @@ class BAACLoader:
         }
 
         # Sauvegarde cache
-        logger.info(f"💾 Sauvegarde du cache...")
+        logger.info(f"Sauvegarde du cache...")
         dump(data, self.cache_file, compress=3)
         with open(cache_signature_file, 'w') as f:
             f.write(current_signature)
-        logger.info("✅ Cache sauvegardé")
+        logger.info("Cache sauvegardé")
 
         return data
