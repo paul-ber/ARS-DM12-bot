@@ -148,6 +148,29 @@ def parse_args():
 
     return parser.parse_args()
 
+import numpy as np
+
+def convert_to_json_serializable(obj):
+    """
+    Convertit les types pandas/numpy en types JSON sérialisables.
+    """
+    if isinstance(obj, dict):
+        return {k: convert_to_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_to_json_serializable(item) for item in obj]
+    elif isinstance(obj, pd.Timestamp):
+        return obj.isoformat() if pd.notna(obj) else None
+    elif isinstance(obj, (np.integer, np.int64)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64)):
+        return None if np.isnan(obj) else float(obj)
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    elif pd.isna(obj):
+        return None
+    else:
+        return obj
+
 def main():
     args = parse_args()
     
@@ -262,16 +285,16 @@ def main():
         # 4. DOCUMENT FINAL ENRICHI
         enriched_doc = {
             "id_accident": str(num_acc),
-            "timestamp": caracteristiques.get('timestamp', pd.Timestamp('2000-01-01')).isoformat() if pd.notna(caracteristiques.get('timestamp')) else None,
+            "timestamp": caracteristiques.get('timestamp').isoformat() if pd.notna(caracteristiques.get('timestamp')) else None,
             
-            # TOUTES les caractéristiques de l'accident
-            "caracteristiques": caracteristiques,
+            # TOUTES les caractéristiques de l'accident (convertir les types)
+            "caracteristiques": convert_to_json_serializable(caracteristiques),
             
-            # Liste complète des véhicules
-            "vehicules": vehicules_list,
+            # Liste complète des véhicules (convertir les types)
+            "vehicules": convert_to_json_serializable(vehicules_list),
             
-            # Liste complète des usagers
-            "usagers": usagers_list,
+            # Liste complète des usagers (convertir les types)
+            "usagers": convert_to_json_serializable(usagers_list),
             
             # Enrichissement Overpass
             "infrastructure_env": infra_data
@@ -316,7 +339,6 @@ def main():
     logger.info(f"Sans GPS           : {stats['sans_gps']:,}")
     logger.info("="*60)
     logger.info("✅ TRAITEMENT TERMINÉ")
-
 
 if __name__ == "__main__":
     try:
