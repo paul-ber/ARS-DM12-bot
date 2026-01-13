@@ -53,31 +53,27 @@ class MeteoEnricher:
 
 class OverpassEnricher:
     """
-    Enrichisseur Overpass configuré pour instance locale.
+    Enrichisseur Overpass configuré pour instance LOCALE.
     Pas de rate limit car serveur dédié.
     """
 
-    BASE_URL = "http://localhost:12345/api/interpreter"
-    # BASE_URL = "https://overpass.private.coffee/api/interpreter"
+    def __init__(self, base_url="http://localhost:12345/api/interpreter"):
+        self.base_url = base_url
+        logger.info(f"🗺️  Overpass configuré sur : {base_url}")
 
-    @staticmethod
-    @sleep_and_retry
-    @limits(calls=OVERPASS_CALLS, period=OVERPASS_PERIOD)
     @backoff.on_exception(
         backoff.expo,
         (requests.exceptions.RequestException),
         max_tries=3,
         factor=1
     )
-    @memory.cache
-    def get_infrastructure(lat, lon, radius=1000):
+    def get_infrastructure(self, lat, lon, radius=1000):
         """
         Récupère les infrastructures routières dans un rayon donné.
-        Rayon élargi à 1000m pour couvrir plus de zones.
+        Optimisé pour serveur local (pas de rate limit).
         """
         logger.debug(f"🔍 Overpass query: lat={lat}, lon={lon}, radius={radius}m")
 
-        # Requête enrichie avec plus de types d'infrastructures
         query = f"""
         [out:json][timeout:30];
         (
@@ -103,16 +99,12 @@ class OverpassEnricher:
 
         try:
             response = requests.get(
-                OverpassEnricher.BASE_URL,
+                self.base_url,
                 params={'data': query},
                 timeout=35
             )
 
             logger.debug(f"   → Status: {response.status_code}")
-
-            if response.status_code == 429:
-                logger.warning("⏳ Overpass Rate Limit 429, retry...")
-                raise requests.exceptions.RequestException("Rate Limit")
 
             if response.status_code == 504:
                 logger.warning("⏳ Overpass Timeout 504, zone trop chargée")
@@ -156,10 +148,9 @@ class OverpassEnricher:
                 if tags.get('highway') in ['motorway', 'trunk', 'primary', 'secondary']:
                     routes_principales += 1
                     maxspeed = tags.get('maxspeed', '')
-                    # Parse "50", "50 km/h", etc.
                     try:
                         speed_val = int(''.join(filter(str.isdigit, maxspeed)))
-                        if 20 <= speed_val <= 150:  # Valeurs plausibles
+                        if 20 <= speed_val <= 150:
                             speeds.append(speed_val)
                     except:
                         pass
