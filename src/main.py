@@ -82,6 +82,13 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--overpass-min-year",
+        type=int,
+        default=None,
+        help="Année minimale pour enrichissement Overpass (ex: 2022 pour 2022-2025)"
+    )
+
+    parser.add_argument(
         "--skip-overpass",
         action="store_true",
         help="Désactive l'enrichissement Overpass (plus rapide pour tests)"
@@ -191,20 +198,20 @@ def convert_to_json_serializable(obj):
 
 def main():
     args = parse_args()
-    
+
     # ... (logging config identique) ...
-    
+
     # 1. Chargement BAAC (nouvelle structure)
     logger.info("\n[1/4] 📥 Chargement des données BAAC...")
     loader = BAACLoader(data_dir=args.data_dir, cache_dir=args.cache_dir)
     data = loader.load_all_years(n_jobs=args.n_jobs, force_reload=args.force_reload)
-    
+
     df_accidents = data['accidents']
     df_vehicules = data['vehicules']
     df_usagers = data['usagers']
-    
+
     logger.info(f"✅ {len(df_accidents):,} accidents chargés")
-    
+
     # 2. Échantillonnage
     if args.sample_size:
         logger.info(f"\n🧪 Échantillonnage de {args.sample_size} accidents")
@@ -213,7 +220,7 @@ def main():
         df_vehicules = df_vehicules[df_vehicules['num_acc'].isin(sample_ids)]
         df_usagers = df_usagers[df_usagers['num_acc'].isin(sample_ids)]
         logger.info(f"✅ {len(df_accidents)} accidents sélectionnés")
-    
+
     # 3. Initialisation Overpass
     overpass_enricher = None
     if not args.skip_overpass:
@@ -221,7 +228,7 @@ def main():
         overpass_enricher = OverpassEnricher(base_url=args.overpass_url)
     else:
         logger.info("\n[2/4] ⏭️  Enrichissement Overpass désactivé")
-    
+
     # 4. Initialisation ELK
     pusher = None
     if args.send_elk:
@@ -241,13 +248,13 @@ def main():
             pusher = None
     else:
         logger.info("\n[3/4] ⏭️  Envoi Elasticsearch désactivé")
-    
+
     # 5. BOUCLE D'ENRICHISSEMENT AVEC TOUTES LES DONNÉES
     logger.info(f"\n[4/4] ⚙️  Enrichissement...")
-    
+
     batch = []
     all_results = [] if args.save_json else None
-    
+
     stats = {
         "total": len(df_accidents),
         "traites": 0,
@@ -255,20 +262,27 @@ def main():
         "overpass_ko": 0,
         "sans_gps": 0
     }
-    
+
     # Groupement véhicules et usagers par accident
     vehicules_by_acc = df_vehicules.groupby('num_acc')
     usagers_by_acc = df_usagers.groupby('num_acc')
-    
+
     for index, row_acc in tqdm(df_accidents.iterrows(), total=len(df_accidents), desc="Enrichissement"):
-        
         num_acc = row_acc['num_acc']
-        
-        # Enrichissement Overpass
+
+        # Enrichissement Overpass (avec filtre année)
         infra_data = None
         has_gps = pd.notna(row_acc['lat']) and pd.notna(row_acc['long']) and row_acc['lat'] != 0 and row_acc['long'] != 0
-        
-        if has_gps and overpass_enricher:
+
+        # Vérifier l'année si filtre activé
+        year_ok = True
+        if args.overpass_min_year:
+            accident_year = row_acc.get('an', 0)
+            year_ok = accident_year >= args.overpass_min_year
+            if not year_ok:
+                logger.debug(f"Accident {num_acc} ({accident_year}) ignoré pour Overpass (< {args.overpass_min_year})")
+
+        if has_gps and overpass_enricher and year_ok:
             try:
                 infra_data = overpass_enricher.get_infrastructure(
                     row_acc['lat'],
@@ -284,48 +298,48 @@ def main():
                 stats["overpass_ko"] += 1
         elif not has_gps:
             stats["sans_gps"] += 1
-        
+
         # CONSTRUCTION DU DOCUMENT COMPLET AVEC TOUTES LES COLONNES
-        
+
         # 1. CARACTÉRISTIQUES + LIEUX (toutes colonnes sauf celles déjà extraites)
         caracteristiques = row_acc.replace({np.nan: None}).to_dict()
-        
+
         # 2. VÉHICULES (liste complète avec toutes colonnes)
         vehicules_list = []
         if num_acc in vehicules_by_acc.groups:
             for _, veh_row in vehicules_by_acc.get_group(num_acc).iterrows():
                 vehicules_list.append(veh_row.replace({np.nan: None}).to_dict())
-        
+
         # 3. USAGERS (liste complète avec toutes colonnes)
         usagers_list = []
         if num_acc in usagers_by_acc.groups:
             for _, usr_row in usagers_by_acc.get_group(num_acc).iterrows():
                 usagers_list.append(usr_row.replace({np.nan: None}).to_dict())
-        
+
         # 4. DOCUMENT FINAL ENRICHI
         enriched_doc = {
             "id_accident": str(num_acc),
             "timestamp": caracteristiques.get('timestamp').isoformat() if pd.notna(caracteristiques.get('timestamp')) else None,
-            
+
             # TOUTES les caractéristiques de l'accident (convertir les types)
             "caracteristiques": convert_to_json_serializable(caracteristiques),
-            
+
             # Liste complète des véhicules (convertir les types)
             "vehicules": convert_to_json_serializable(vehicules_list),
-            
+
             # Liste complète des usagers (convertir les types)
             "usagers": convert_to_json_serializable(usagers_list),
-            
+
             # Enrichissement Overpass
             "infrastructure_env": infra_data
         }
-        
+
         batch.append(enriched_doc)
         stats["traites"] += 1
-        
+
         if args.save_json:
             all_results.append(enriched_doc)
-        
+
         # Push batch
         if len(batch) >= args.batch_size:
             if pusher:
@@ -334,12 +348,12 @@ def main():
                 except Exception as e:
                     logger.error(f"Erreur push batch : {e}")
             batch = []
-    
+
     # 6. Dernier batch
     if batch and pusher:
         logger.info(f"\n📤 Envoi du dernier batch ({len(batch)} documents)...")
         pusher.push_documents(batch)
-    
+
     # 7. Sauvegarde JSON
     if args.save_json and all_results:
         logger.info(f"\n💾 Sauvegarde JSON dans {args.json_output}...")
@@ -347,7 +361,7 @@ def main():
         with open(args.json_output, 'w', encoding='utf-8') as f:
             json.dump(all_results, f, indent=2, ensure_ascii=False)
         logger.info(f"✅ {len(all_results)} accidents sauvegardés")
-    
+
     # 8. Statistiques
     logger.info("\n" + "="*60)
     logger.info("📊 STATISTIQUES FINALES")
