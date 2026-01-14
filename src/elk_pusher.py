@@ -181,7 +181,7 @@ class ElasticPusher:
         actions = [
             {
                 "_index": index_name,
-                "_id": doc.get("num_acc") if "accidents" in index_name or "lieux" in index_name else None,
+                "_id": doc.get("num_acc") if index_name == "accidents-caracteristiques" else None,
                 "_source": doc
             }
             for doc in documents
