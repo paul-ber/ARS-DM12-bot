@@ -1,10 +1,9 @@
-import pandas as pd
 import os
 import glob
-import time
-from joblib import Parallel, delayed, dump, load, hash as joblib_hash
 import logging
+import pandas as pd
 from charset_normalizer import from_path
+from joblib import Parallel, delayed, dump, load, hash as joblib_hash
 
 logger = logging.getLogger("DM12")
 
@@ -44,19 +43,19 @@ class BAACLoader:
     def _normalize_columns(self, df):
         """Normalise les noms de colonnes (lowercase + mapping standard)"""
         df.columns = df.columns.str.lower()
-        
+
         column_mapping = {
             'accident_id': 'num_acc',
             'agglo': 'agg',
             'id_vehicule': 'id_vehicule',
             'num_veh': 'num_veh',
         }
-        
+
         rename_dict = {old: new for old, new in column_mapping.items()
                       if old in df.columns and old != new}
         if rename_dict:
             df.rename(columns=rename_dict, inplace=True)
-        
+
         return df
 
     def _clean_numeric_codes(self, df):
@@ -64,13 +63,13 @@ class BAACLoader:
         # Convertir num_acc en string
         if 'num_acc' in df.columns:
             df['num_acc'] = df['num_acc'].astype(str)
-        
+
         # Nettoyer dep et com
         if 'dep' in df.columns:
             df['dep'] = df['dep'].astype(str).str.rstrip('0').str.zfill(2)
         if 'com' in df.columns:
             df['com'] = df['com'].astype(str).str.replace('.0', '', regex=False).str.zfill(3)
-        
+
         return df
 
     def _process_timestamp(self, df, year):
@@ -98,7 +97,7 @@ class BAACLoader:
                 df['heure'].astype(str).str.zfill(2) + ':' +
                 df['minute'].astype(str).str.zfill(2),
                 errors='coerce'
-            )
+            ).tz_localize('Europe/Paris', ambiguous='NaT', nonexistent='NaT')
         else:
             df['timestamp'] = pd.NaT
 
@@ -134,7 +133,7 @@ class BAACLoader:
         CONSERVE TOUTES LES COLONNES sans agrégation destructive.
         """
         base_path = os.path.join(self.data_dir, str(year))
-        
+
         try:
             # 1. LECTURE DES 4 FICHIERS
             carac_file = self._find_file(base_path, "caract")
@@ -180,11 +179,11 @@ class BAACLoader:
             # 5. FUSION CARACTERISTIQUES + LIEUX (1:1)
             df_accident = pd.merge(df_carac, df_lieux, on='num_acc', how='left', suffixes=('', '_lieux'))
 
-            # 6. STRUCTURE FINALE : 
+            # 6. STRUCTURE FINALE :
             # - Un dict par accident avec TOUTES ses colonnes
             # - Une liste de véhicules avec TOUTES leurs colonnes
             # - Une liste d'usagers avec TOUTES leurs colonnes
-            
+
             result = {
                 'accidents': df_accident,
                 'vehicules': df_veh,
@@ -192,11 +191,11 @@ class BAACLoader:
                 'year': year
             }
 
-            logger.info(f"✅ {year}: {len(df_accident)} accidents, {len(df_veh)} véhicules, {len(df_usagers)} usagers")
+            logger.info(f"{year}: {len(df_accident)} accidents, {len(df_veh)} véhicules, {len(df_usagers)} usagers")
             return result
 
         except Exception as e:
-            logger.error(f"❌ Erreur lecture {year} : {e}")
+            logger.error(f"Erreur lecture {year} : {e}")
             return None
 
     def _find_file(self, path, keyword):
@@ -220,14 +219,14 @@ class BAACLoader:
                 cached_signature = f.read().strip()
 
             if cached_signature == current_signature:
-                logger.info("📦 Cache BAAC complet trouvé, chargement rapide...")
+                logger.info("Cache BAAC complet trouvé, chargement rapide...")
                 data = load(self.cache_file)
-                logger.info(f"✅ {len(data):,} accidents chargés depuis le cache")
+                logger.info(f"{len(data):,} accidents chargés depuis le cache")
                 return data
             else:
-                logger.info("🔄 Cache obsolète, rechargement...")
+                logger.info("Cache obsolète, rechargement...")
         else:
-            logger.info("📥 Pas de cache, chargement complet...")
+            logger.info("Pas de cache, chargement complet...")
 
         # Chargement parallèle
         year_dirs = glob.glob(os.path.join(self.data_dir, "[12][0-9][0-9][0-9]"))

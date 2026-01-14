@@ -1,19 +1,19 @@
-import pandas as pd
-import numpy as np
-from tqdm import tqdm
 from baac_loader import BAACLoader
-from enrichers import OverpassEnricher
 from elk_pusher import ElasticPusher
+from enrichers import OverpassEnricher
+from utils import *
 from enrichment_processor import EnrichmentProcessor, get_accidents_to_enrich, update_elk_with_enrichment
+
 import os
-import argparse
 import sys
+import logging
+import argparse
+from tqdm import tqdm
 from dotenv import load_dotenv
 
 load_dotenv()
 
-import logging
-
+# Logging configuration
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
@@ -27,27 +27,6 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger("DM12")
-
-
-def convert_to_json_serializable(obj):
-    """Convertit récursivement les types pandas/numpy en types JSON natifs."""
-    if isinstance(obj, dict):
-        return {k: convert_to_json_serializable(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [convert_to_json_serializable(item) for item in obj]
-    elif isinstance(obj, pd.Timestamp):
-        return obj.isoformat() if pd.notna(obj) else None
-    elif isinstance(obj, (np.integer, np.int64, np.int32)):
-        return int(obj)
-    elif isinstance(obj, (np.floating, np.float64, np.float32)):
-        return None if np.isnan(obj) else float(obj)
-    elif isinstance(obj, np.bool_):
-        return bool(obj)
-    elif pd.isna(obj):
-        return None
-    else:
-        return obj
-
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -80,7 +59,6 @@ def parse_args():
 
     return parser.parse_args()
 
-
 def mode_enrich_only(args):
     """Mode enrichissement : met à jour les accidents avec Overpass"""
     logger.info("MODE ENRICHISSEMENT")
@@ -112,12 +90,11 @@ def mode_enrich_only(args):
 
     update_elk_with_enrichment(pusher, enriched_data, batch_size=args.batch_size)
 
-
 def mode_import(args):
     """Mode import : charge les données BAAC et les envoie vers ELK"""
 
-    # 1. Chargement BAAC
-    logger.info("\n[1/4] Chargement des données BAAC...")
+    # 1. Chargement BAAC (avec nettoyage intégré)
+    logger.info("\n[1/4] Chargement et nettoyage des données BAAC...")
     loader = BAACLoader(data_dir=args.data_dir, cache_dir=args.cache_dir)
     data = loader.load_all_years(n_jobs=args.n_jobs, force_reload=args.force_reload)
 
@@ -129,7 +106,7 @@ def mode_import(args):
 
     # 2. Échantillonnage
     if args.sample_size:
-        logger.info(f"\Échantillonnage de {args.sample_size} accidents")
+        logger.info(f"\nÉchantillonnage de {args.sample_size} accidents")
         sample_ids = df_accidents['num_acc'].sample(min(args.sample_size, len(df_accidents)))
         df_accidents = df_accidents[df_accidents['num_acc'].isin(sample_ids)]
         df_vehicules = df_vehicules[df_vehicules['num_acc'].isin(sample_ids)]
@@ -139,16 +116,21 @@ def mode_import(args):
     # 3. Connexion ELK
     pusher = None
     if args.send_elk:
-        logger.info(f"\n[2/4] Connexion à Elasticsearch")
-        pusher = ElasticPusher(
-            host=args.elk_host,
-            port=args.elk_port,
-            user=args.elk_user,
-            password=args.elk_password
-        )
-        pusher.create_accidents_index()
-        pusher.create_vehicules_index()
-        pusher.create_usagers_index()
+        logger.info(f"\n[2/4] Connexion à Elasticsearch {args.elk_host}:{args.elk_port}")
+        try:
+            pusher = ElasticPusher(
+                host=args.elk_host,
+                port=args.elk_port,
+                user=args.elk_user,
+                password=args.elk_password
+            )
+            pusher.create_accidents_index()
+            pusher.create_vehicules_index()
+            pusher.create_usagers_index()
+            logger.info(f"Index créés/vérifiés")
+        except Exception as e:
+            logger.error(f"Impossible de se connecter à ELK : {e}")
+            return
     else:
         logger.info("\n[2/4] Envoi Elasticsearch désactivé")
         return
@@ -160,7 +142,7 @@ def mode_import(args):
     for _, row in tqdm(df_accidents.iterrows(), total=len(df_accidents), desc="Accidents"):
         doc = convert_to_json_serializable(row.to_dict())
 
-        # Ajouter geo_point
+        # Ajouter geo_point si GPS valide
         if doc.get('lat') and doc.get('long'):
             doc['coords'] = {"lat": doc['lat'], "lon": doc['long']}
 
@@ -193,11 +175,6 @@ def mode_import(args):
 
     for _, row in tqdm(df_usagers.iterrows(), total=len(df_usagers), desc="Usagers"):
         doc = convert_to_json_serializable(row.to_dict())
-
-        # Calculer l'âge
-        if doc.get('an_nais') and doc.get('an_nais') > 1900:
-            doc['age'] = 2026 - doc['an_nais']
-
         batch_usr.append(doc)
 
         if len(batch_usr) >= args.batch_size:
@@ -217,9 +194,8 @@ def mode_import(args):
     logger.info("="*60)
 
     if not args.skip_overpass:
-        logger.info("\nPour enrichir avec Overpass :")
+        logger.info("Pour enrichir avec Overpass :")
         logger.info("python src/main.py --enrich-only --send-elk --overpass-min-year 2022 --overpass-workers 20")
-
 
 def main():
     args = parse_args()
@@ -228,7 +204,7 @@ def main():
         logging.getLogger("DM12").setLevel(logging.DEBUG)
 
     logger.info("="*60)
-    logger.info("🚀 PIPELINE BAAC - 3 INDEX")
+    logger.info("PIPELINE BAAC")
     logger.info("="*60)
 
     try:
@@ -242,7 +218,6 @@ def main():
     except Exception as e:
         logger.exception(f"\nERREUR : {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
