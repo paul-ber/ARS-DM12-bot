@@ -162,6 +162,13 @@ class BAACLoader:
             if pd.isna(value):
                 return np.nan
 
+            # SI C'EST UN FLOAT, CONVERTIR EN INT D'ABORD (pour éviter le ".0")
+            if isinstance(value, float):
+                if value == 0.0:
+                    return np.nan
+                # Sinon convertir en int pour enlever le .0
+                value = int(value)
+
             # Convertir en string et nettoyer
             str_val = str(value).strip()
 
