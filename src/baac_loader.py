@@ -142,26 +142,90 @@ class BAACLoader:
 
         return df
 
-    def process_coordinates(self, df):
-        """Nettoie et valide les coordonnées GPS"""
+    def process_coordinates(df):
+        """
+        Nettoie et valide les coordonnées GPS avec support des formats historiques.
+
+        Formats supportés:
+        - 2019-2024: Décimal avec virgule (ex: "47,56277000")
+        - 2005-2018: Format compacté 7 chiffres (ex: "5055737" = 50.55737)
+                    avec support du signe négatif (ex: "-082600" = -0.82600)
+        """
+
+        def parse_gps_coordinate(value):
+            """Parse une coordonnée GPS selon son format"""
+            if pd.isna(value):
+                return np.nan
+
+            # Convertir en string et nettoyer
+            str_val = str(value).strip()
+
+            # Gérer les valeurs vides
+            if not str_val or str_val.lower() in ['nan', 'none', '']:
+                return np.nan
+
+            # Format moderne (2019+): nombre avec virgule décimale
+            if ',' in str_val or '.' in str_val:
+                # Remplacer virgule par point
+                str_val = str_val.replace(',', '.')
+                try:
+                    return float(str_val)
+                except ValueError:
+                    return np.nan
+
+            # Format ancien (2005-2018): 7 chiffres compactés
+            # Gérer le signe négatif
+            is_negative = str_val.startswith('-')
+            if is_negative:
+                digits = str_val[1:]  # Retirer le signe pour traitement
+            else:
+                digits = str_val
+
+            # Ne conserver que les chiffres (au cas où)
+            digits = ''.join(ch for ch in digits if ch.isdigit())
+
+            # Si vide après suppression des non-chiffres, c'est 0
+            if not digits:
+                return 0.0
+
+            # Pour le format compacté historique, on s'attend à au moins 6 chiffres ;
+            # si c'est moins, tenter de retrouver le format en complétant à gauche avec des zéros
+            if len(digits) < 6:
+                digits = digits.zfill(6)
+
+            # Format: DDMMMMM (2 degrés + 5 décimales) mais si 6 chiffres => 1 degré + 5 décimales
+            if len(digits) == 6:
+                # Cas spécial: 082600 -> 0.82600
+                degrees = digits[:1]
+                decimals = digits[1:]
+            else:
+                degrees = digits[:2]
+                decimals = digits[2:]
+
+            coord = float(f"{degrees}.{decimals}")
+
+            return -coord if is_negative else coord
+
+        # Traiter latitude
         if "lat" in df.columns:
-            df["lat"] = df["lat"].astype(str).str.replace(",", ".")
-            df["lat"] = pd.to_numeric(df["lat"], errors="coerce")
+            df["lat"] = df["lat"].apply(parse_gps_coordinate)
         else:
-            df["lat"] = None
+            df["lat"] = np.nan
 
+        # Traiter longitude
         if "long" in df.columns:
-            df["long"] = df["long"].astype(str).str.replace(",", ".")
-            df["long"] = pd.to_numeric(df["long"], errors="coerce")
+            df["long"] = df["long"].apply(parse_gps_coordinate)
         else:
-            df["long"] = None
+            df["long"] = np.nan
 
+        # Validation: supprimer les coordonnées aberrantes
         if "lat" in df.columns and "long" in df.columns:
             mask_aberrant = (
                 (df["lat"] == 0) | (df["long"] == 0) |
+                (df["lat"].isna()) | (df["long"].isna()) |
                 (df["lat"].abs() > 90) | (df["long"].abs() > 180)
             )
-            df.loc[mask_aberrant, ["lat", "long"]] = None
+            df.loc[mask_aberrant, ["lat", "long"]] = np.nan
 
         return df
 
