@@ -16,75 +16,75 @@ class ElasticPusher:
 
         # Test connexion
         if not self.es.ping():
-            raise ConnectionError(f"❌ Impossible de se connecter à Elasticsearch sur {host}:{port}")
+            raise ConnectionError(f"Impossible de se connecter à Elasticsearch sur {host}:{port}")
 
         info = self.es.info()
         logger.info(f"Connecté à Elasticsearch : {info['version']['number']}")
 
-def create_accidents_index(self, index_name="accidents-routiers"):
-    """Crée l'index des accidents avec mapping optimisé"""
-    if self.es.indices.exists(index=index_name):
-        logger.info(f"ℹ️  Index '{index_name}' existe déjà")
-        return
+    def create_accidents_index(self, index_name="accidents-routiers"):
+        """Crée l'index des accidents avec mapping optimisé"""
+        if self.es.indices.exists(index=index_name):
+            logger.info(f"Index '{index_name}' existe déjà")
+            return
 
-    mapping = {
-        "mappings": {
-            "properties": {
-                "num_acc": {"type": "keyword"},
-                "timestamp": {"type": "date"},
-                "an": {"type": "integer"},
-                "mois": {"type": "integer"},
-                "jour": {"type": "integer"},
-                "heure": {"type": "integer"},
-                "lat": {"type": "float"},
-                "long": {"type": "float"},
-                "coords": {"type": "geo_point"},
-                "dep": {"type": "keyword"},
-                "com": {"type": "keyword"},
-                "agg": {"type": "integer"},
-                "int": {"type": "integer"},
-                "atm": {"type": "integer"},
-                "col": {"type": "integer"},
-                "lum": {"type": "integer"},
-                "catr": {"type": "integer"},
-                "circ": {"type": "integer"},
-                "nbv": {"type": "integer"},
-                "vosp": {"type": "integer"},
-                "prof": {"type": "integer"},
-                "plan": {"type": "integer"},
-                "surf": {"type": "integer"},
-                "infra": {"type": "integer"},
-                "situ": {"type": "integer"},
-                "vma": {"type": "integer"},
-                "adr": {"type": "text"},
+        mapping = {
+            "mappings": {
+                "properties": {
+                    "num_acc": {"type": "keyword"},
+                    "timestamp": {"type": "date"},
+                    "an": {"type": "integer"},
+                    "mois": {"type": "integer"},
+                    "jour": {"type": "integer"},
+                    "heure": {"type": "integer"},
+                    "lat": {"type": "float"},
+                    "long": {"type": "float"},
+                    "coords": {"type": "geo_point"},
+                    "dep": {"type": "keyword"},
+                    "com": {"type": "keyword"},
+                    "agg": {"type": "integer"},
+                    "int": {"type": "integer"},
+                    "atm": {"type": "integer"},
+                    "col": {"type": "integer"},
+                    "lum": {"type": "integer"},
+                    "catr": {"type": "integer"},
+                    "circ": {"type": "integer"},
+                    "nbv": {"type": "integer"},
+                    "vosp": {"type": "integer"},
+                    "prof": {"type": "integer"},
+                    "plan": {"type": "integer"},
+                    "surf": {"type": "integer"},
+                    "infra": {"type": "integer"},
+                    "situ": {"type": "integer"},
+                    "vma": {"type": "integer"},
+                    "adr": {"type": "text"},
 
-                "voie": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
-                "larrout": {"type": "text"},
-                "pr": {"type": "text"},
-                "v1": {"type": "text"},
-                "v2": {"type": "text"},
-                "lartpc": {"type": "text"},
+                    "voie": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+                    "larrout": {"type": "text"},
+                    "pr": {"type": "text"},
+                    "v1": {"type": "text"},
+                    "v2": {"type": "text"},
+                    "lartpc": {"type": "text"},
 
-                "infrastructure_env": {
-                    "properties": {
-                        "radars": {"type": "integer"},
-                        "glissieres": {"type": "integer"},
-                        "ralentisseurs": {"type": "integer"},
-                        "feux": {"type": "integer"},
-                        "stops_cedez": {"type": "integer"},
-                        "passages_pietons": {"type": "integer"},
-                        "ronds_points": {"type": "integer"},
-                        "routes_principales": {"type": "integer"},
-                        "vitesse_max_moyenne": {"type": "integer"},
-                        "total": {"type": "integer"}
+                    "infrastructure_env": {
+                        "properties": {
+                            "radars": {"type": "integer"},
+                            "glissieres": {"type": "integer"},
+                            "ralentisseurs": {"type": "integer"},
+                            "feux": {"type": "integer"},
+                            "stops_cedez": {"type": "integer"},
+                            "passages_pietons": {"type": "integer"},
+                            "ronds_points": {"type": "integer"},
+                            "routes_principales": {"type": "integer"},
+                            "vitesse_max_moyenne": {"type": "integer"},
+                            "total": {"type": "integer"}
+                        }
                     }
                 }
             }
         }
-    }
 
-    self.es.indices.create(index=index_name, body=mapping)
-    logger.info(f"✅ Index '{index_name}' créé")
+        self.es.indices.create(index=index_name, body=mapping)
+        logger.info(f"Index '{index_name}' créé")
 
 
     def create_vehicules_index(self, index_name="accidents-vehicules"):
