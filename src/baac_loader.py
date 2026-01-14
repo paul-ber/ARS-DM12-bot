@@ -143,7 +143,7 @@ class BAACLoader:
 
         return df
 
-    def process_coordinates(df):
+    def process_coordinates(self, df):
         """
         Nettoie et valide les coordonnées GPS avec support des formats historiques.
 
@@ -153,7 +153,7 @@ class BAACLoader:
                     avec support du signe négatif (ex: "-082600" = -0.82600)
         """
 
-        def parse_gps_coordinate(self, value):
+        def parse_gps_coordinate(value):
             """Parse une coordonnée GPS selon son format"""
             if pd.isna(value):
                 return np.nan
