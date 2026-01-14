@@ -1,10 +1,9 @@
-import pandas as pd
 import os
 import glob
-import time
-from joblib import Parallel, delayed, dump, load, hash as joblibhash
 import logging
+import pandas as pd
 from charset_normalizer import from_path
+from joblib import Parallel, delayed, dump, load, hash as joblibhash
 
 logger = logging.getLogger("DM12")
 
@@ -52,7 +51,7 @@ class BAACLoader:
             "num_veh": "num_veh",
         }
 
-        rename_dict = {old: new for old, new in column_mapping.items() 
+        rename_dict = {old: new for old, new in column_mapping.items()
                       if old in df.columns and old != new}
         if rename_dict:
             df.rename(columns=rename_dict, inplace=True)
@@ -167,8 +166,9 @@ class BAACLoader:
         return df
 
     def load_year(self, year):
-        """Charge les 4 fichiers pour une année donnée et retourne un dict structuré.
-        CONSERVE TOUTES LES COLONNES sans agrégation destructive."""
+        """
+        Charge les 4 fichiers pour une année donnée et retourne un dict structuré.
+        """
         base_path = os.path.join(self.data_dir, str(year))
 
         try:
@@ -177,36 +177,39 @@ class BAACLoader:
             veh_file = self.find_file(base_path, "vehicules")
             usagers_file = self.find_file(base_path, "usagers")
 
-            df_carac = pd.read_csv(carac_file, sep=None, engine="python", 
+            df_carac = pd.read_csv(carac_file, sep=None, engine="python",
                                   encoding=self.detect_encoding(carac_file), on_bad_lines="skip")
-            df_lieux = pd.read_csv(lieux_file, sep=None, engine="python", 
+            df_lieux = pd.read_csv(lieux_file, sep=None, engine="python",
                                   encoding=self.detect_encoding(lieux_file), on_bad_lines="skip")
-            df_veh = pd.read_csv(veh_file, sep=None, engine="python", 
+            df_veh = pd.read_csv(veh_file, sep=None, engine="python",
                                 encoding=self.detect_encoding(veh_file), on_bad_lines="skip")
-            df_usagers = pd.read_csv(usagers_file, sep=None, engine="python", 
+            df_usagers = pd.read_csv(usagers_file, sep=None, engine="python",
                                     encoding=self.detect_encoding(usagers_file), on_bad_lines="skip")
 
+            # Normalisation des colonnes
             df_carac = self.normalize_columns(df_carac)
             df_lieux = self.normalize_columns(df_lieux)
             df_veh = self.normalize_columns(df_veh)
             df_usagers = self.normalize_columns(df_usagers)
 
+            # Nettoyage des codes
             for df in [df_carac, df_lieux, df_veh, df_usagers]:
                 self.clean_numeric_codes(df)
 
+            # Traitement timestamp et GPS uniquement sur caractéristiques
             df_carac = self.process_timestamp(df_carac, year)
             df_carac = self.process_coordinates(df_carac)
 
-            df_accident = pd.merge(df_carac, df_lieux, on="num_acc", how="left", suffixes=("", "_lieux"))
-
             result = {
-                "accidents": df_accident,
+                "accidents": df_carac,
+                "lieux": df_lieux,
                 "vehicules": df_veh,
                 "usagers": df_usagers,
                 "year": year
             }
 
-            logger.info(f"{year}: {len(df_accident)} accidents, {len(df_veh)} véhicules, {len(df_usagers)} usagers")
+            logger.info(f"{year}: {len(df_carac)} accidents, {len(df_lieux)} lieux, "
+                       f"{len(df_veh)} véhicules, {len(df_usagers)} usagers")
             return result
 
         except Exception as e:
@@ -222,7 +225,7 @@ class BAACLoader:
         return files[0]
 
     def load_all_years(self, n_jobs=10, force_reload=False):
-        """Charge toutes les années et retourne un DataFrame structuré avec nested data."""
+        """Charge toutes les années et retourne un dict avec 4 DataFrames séparés."""
         current_signature = self.get_data_signature()
         cache_signature_file = self.cache_file + ".sig"
 
@@ -233,7 +236,7 @@ class BAACLoader:
             if cached_signature == current_signature:
                 logger.info("✅ Cache BAAC complet trouvé, chargement rapide...")
                 data = load(self.cache_file)
-                logger.info(f"📦 {len(data['accidents'])} accidents chargés depuis le cache")
+                logger.info(f"📦 {len(data['accidents'])} accidents, {len(data['lieux'])} lieux chargés")
                 return data
             else:
                 logger.info("⚠️ Cache obsolète, rechargement...")
@@ -244,41 +247,46 @@ class BAACLoader:
         years = sorted([int(os.path.basename(d)) for d in year_dirs])
 
         if not years:
-            raise FileNotFoundError(f"⚠️ Aucune année trouvée dans {self.data_dir}")
+            raise FileNotFoundError(f"Aucune année trouvée dans {self.data_dir}")
 
-        logger.info(f"📂 Années: {years}")
-        logger.info(f"⚙️ Chargement parallèle (n_jobs={n_jobs})")
+        logger.info(f"Années: {years}")
+        logger.info(f"Chargement parallèle (n_jobs={n_jobs})")
 
         results = Parallel(n_jobs=n_jobs, verbose=10)(
             delayed(self.load_year)(year) for year in years
         )
 
         all_accidents = []
+        all_lieux = []
         all_vehicules = []
         all_usagers = []
 
         for r in results:
             if r is not None:
                 all_accidents.append(r["accidents"])
+                all_lieux.append(r["lieux"])
                 all_vehicules.append(r["vehicules"])
                 all_usagers.append(r["usagers"])
 
         df_accidents = pd.concat(all_accidents, ignore_index=True)
+        df_lieux = pd.concat(all_lieux, ignore_index=True)
         df_vehicules = pd.concat(all_vehicules, ignore_index=True)
         df_usagers = pd.concat(all_usagers, ignore_index=True)
 
-        logger.info(f"📊 TOTAL: {len(df_accidents)} accidents, {len(df_vehicules)} véhicules, {len(df_usagers)} usagers")
+        logger.info(f"TOTAL: {len(df_accidents)} accidents, {len(df_lieux)} lieux, "
+                   f"{len(df_vehicules)} véhicules, {len(df_usagers)} usagers")
 
         data = {
             "accidents": df_accidents,
+            "lieux": df_lieux,
             "vehicules": df_vehicules,
             "usagers": df_usagers
         }
 
-        logger.info("💾 Sauvegarde du cache...")
+        logger.info("Sauvegarde du cache...")
         dump(data, self.cache_file, compress=3)
         with open(cache_signature_file, "w") as f:
             f.write(current_signature)
-        logger.info("✅ Cache sauvegardé")
+        logger.info("Cache sauvegardé")
 
         return data

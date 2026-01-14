@@ -1,19 +1,19 @@
 from baac_loader import BAACLoader
 from elk_pusher import ElasticPusher
 from enrichers import OverpassEnricher
-from utils import *
-from enrichment_processor import EnrichmentProcessor, get_accidents_to_enrich, update_elk_with_enrichment
 
 import os
 import sys
 import logging
 import argparse
+from utils import *
 from tqdm import tqdm
 from dotenv import load_dotenv
+from enrichment_processor import EnrichmentProcessor, get_accidents_to_enrich, update_elk_with_enrichment
 
 load_dotenv()
 
-# Logging configuration
+
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
@@ -81,7 +81,7 @@ def mode_enrich_only(args):
         return
 
     for acc in accidents_to_enrich:
-        acc['radius'] = args.overpass_radius
+        acc["radius"] = args.overpass_radius
 
     overpass_enricher = OverpassEnricher(base_url=args.overpass_url)
     processor = EnrichmentProcessor(overpass_enricher)
@@ -93,58 +93,57 @@ def mode_enrich_only(args):
 def mode_import(args):
     """Mode import : charge les données BAAC et les envoie vers ELK"""
 
-    # 1. Chargement BAAC (avec nettoyage intégré)
-    logger.info("\n[1/4] Chargement et nettoyage des données BAAC...")
+    # [1/6] CHARGEMENT BAAC
+    logger.info("=" * 60)
+    logger.info("[1/6] Chargement des données BAAC...")
     loader = BAACLoader(data_dir=args.data_dir, cache_dir=args.cache_dir)
     data = loader.load_all_years(n_jobs=args.n_jobs, force_reload=args.force_reload)
 
-    df_accidents = data['accidents']
-    df_vehicules = data['vehicules']
-    df_usagers = data['usagers']
+    df_accidents = data["accidents"]
+    df_lieux = data["lieux"]
+    df_vehicules = data["vehicules"]
+    df_usagers = data["usagers"]
 
-    logger.info(f"{len(df_accidents):,} accidents, {len(df_vehicules):,} véhicules, {len(df_usagers):,} usagers")
+    logger.info(f"{len(df_accidents)} accidents, {len(df_lieux)} lieux, "
+               f"{len(df_vehicules)} véhicules, {len(df_usagers)} usagers")
 
-    # 2. Échantillonnage
+    # [2/6] ÉCHANTILLONNAGE
     if args.sample_size:
-        logger.info(f"\nÉchantillonnage de {args.sample_size} accidents")
-        sample_ids = df_accidents['num_acc'].sample(min(args.sample_size, len(df_accidents)))
-        df_accidents = df_accidents[df_accidents['num_acc'].isin(sample_ids)]
-        df_vehicules = df_vehicules[df_vehicules['num_acc'].isin(sample_ids)]
-        df_usagers = df_usagers[df_usagers['num_acc'].isin(sample_ids)]
+        logger.info(f"[2/6] Échantillonnage de {args.sample_size} accidents")
+        sample_ids = df_accidents["num_acc"].sample(min(args.sample_size, len(df_accidents)))
+        df_accidents = df_accidents[df_accidents["num_acc"].isin(sample_ids)]
+        df_lieux = df_lieux[df_lieux["num_acc"].isin(sample_ids)]
+        df_vehicules = df_vehicules[df_vehicules["num_acc"].isin(sample_ids)]
+        df_usagers = df_usagers[df_usagers["num_acc"].isin(sample_ids)]
         logger.info(f"{len(df_accidents)} accidents sélectionnés")
 
-    # 3. Connexion ELK
+    # [3/6] CONNEXION ELK
     pusher = None
     if args.send_elk:
-        logger.info(f"\n[2/4] Connexion à Elasticsearch {args.elk_host}:{args.elk_port}")
-        try:
-            pusher = ElasticPusher(
-                host=args.elk_host,
-                port=args.elk_port,
-                user=args.elk_user,
-                password=args.elk_password
-            )
-            pusher.create_accidents_index()
-            pusher.create_vehicules_index()
-            pusher.create_usagers_index()
-            logger.info(f"Index créés/vérifiés")
-        except Exception as e:
-            logger.error(f"Impossible de se connecter à ELK : {e}")
-            return
+        logger.info(f"[3/6] Connexion à Elasticsearch")
+        pusher = ElasticPusher(
+            host=args.elk_host,
+            port=args.elk_port,
+            user=args.elk_user,
+            password=args.elk_password
+        )
+
+        pusher.create_accidents_index()
+        pusher.create_lieux_index()
+        pusher.create_vehicules_index()
+        pusher.create_usagers_index()
     else:
-        logger.info("\n[2/4] Envoi Elasticsearch désactivé")
+        logger.info("[3/6] Envoi Elasticsearch désactivé")
         return
 
-    # 4. Envoi ACCIDENTS
-    logger.info(f"\n[3/4] Envoi des accidents...")
+    # [4/6] ENVOI ACCIDENTS
+    logger.info(f"[4/6] Envoi des accidents...")
     batch_acc = []
-
     for _, row in tqdm(df_accidents.iterrows(), total=len(df_accidents), desc="Accidents"):
         doc = convert_to_json_serializable(row.to_dict())
 
-        # Ajouter geo_point si GPS valide
-        if doc.get('lat') and doc.get('long'):
-            doc['coords'] = {"lat": doc['lat'], "lon": doc['long']}
+        if doc.get("lat") and doc.get("long"):
+            doc["coords"] = {"lat": doc["lat"], "lon": doc["long"]}
 
         batch_acc.append(doc)
 
@@ -155,10 +154,25 @@ def mode_import(args):
     if batch_acc:
         pusher.push_documents(batch_acc, "accidents-routiers")
 
-    # 5. Envoi VEHICULES
-    logger.info(f"\n[4/4] Envoi des véhicules et usagers...")
-    batch_veh = []
+    # [5/6] ENVOI LIEUX
+    logger.info(f"[5/6] Envoi des lieux...")
+    batch_lieux = []
+    for _, row in tqdm(df_lieux.iterrows(), total=len(df_lieux), desc="Lieux"):
+        doc = convert_to_json_serializable(row.to_dict())
+        batch_lieux.append(doc)
 
+        if len(batch_lieux) >= args.batch_size:
+            pusher.push_documents(batch_lieux, "accidents-lieux")
+            batch_lieux = []
+
+    if batch_lieux:
+        pusher.push_documents(batch_lieux, "accidents-lieux")
+
+    # [6/6] ENVOI VÉHICULES ET USAGERS
+    logger.info(f"[6/6] Envoi des véhicules et usagers...")
+
+    # Véhicules
+    batch_veh = []
     for _, row in tqdm(df_vehicules.iterrows(), total=len(df_vehicules), desc="Véhicules"):
         doc = convert_to_json_serializable(row.to_dict())
         batch_veh.append(doc)
@@ -170,11 +184,14 @@ def mode_import(args):
     if batch_veh:
         pusher.push_documents(batch_veh, "accidents-vehicules")
 
-    # 6. Envoi USAGERS
+    # Usagers
     batch_usr = []
-
     for _, row in tqdm(df_usagers.iterrows(), total=len(df_usagers), desc="Usagers"):
         doc = convert_to_json_serializable(row.to_dict())
+
+        if doc.get("annais") and doc.get("annais") > 1900:
+            doc["age"] = 2026 - doc["annais"]
+
         batch_usr.append(doc)
 
         if len(batch_usr) >= args.batch_size:
@@ -184,17 +201,18 @@ def mode_import(args):
     if batch_usr:
         pusher.push_documents(batch_usr, "accidents-usagers")
 
-    # Stats finales
-    logger.info("\n" + "="*60)
+    # STATS FINALES
+    logger.info("=" * 60)
     logger.info("IMPORT TERMINÉ")
-    logger.info("="*60)
-    logger.info(f"Accidents importés : {len(df_accidents):,}")
-    logger.info(f"Véhicules importés : {len(df_vehicules):,}")
-    logger.info(f"Usagers importés   : {len(df_usagers):,}")
-    logger.info("="*60)
+    logger.info("=" * 60)
+    logger.info(f"Accidents importés: {len(df_accidents)}")
+    logger.info(f"Lieux importés: {len(df_lieux)}")
+    logger.info(f"Véhicules importés: {len(df_vehicules)}")
+    logger.info(f"Usagers importés: {len(df_usagers)}")
+    logger.info("=" * 60)
 
     if not args.skip_overpass:
-        logger.info("Pour enrichir avec Overpass :")
+        logger.info("\Pour enrichir avec Overpass:")
         logger.info("python src/main.py --enrich-only --send-elk --overpass-min-year 2022 --overpass-workers 20")
 
 def main():
@@ -203,20 +221,21 @@ def main():
     if args.verbose:
         logging.getLogger("DM12").setLevel(logging.DEBUG)
 
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info("PIPELINE BAAC")
-    logger.info("="*60)
+    logger.info("=" * 60)
 
     try:
         if args.enrich_only:
             mode_enrich_only(args)
         else:
             mode_import(args)
+
     except KeyboardInterrupt:
-        logger.error("\nInterruption")
+        logger.error("Interruption")
         sys.exit(1)
     except Exception as e:
-        logger.exception(f"\nERREUR : {e}")
+        logger.exception(f"{e}")
         sys.exit(1)
 
 if __name__ == "__main__":

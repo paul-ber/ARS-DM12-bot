@@ -5,64 +5,52 @@ logger = logging.getLogger("DM12")
 
 class ElasticPusher:
     def __init__(self, host="localhost", port=9200, user=None, password=None):
-        """Initialise la connexion à Elasticsearch"""
+        """Initialise la connexion Elasticsearch"""
         if user and password:
-            self.es = Elasticsearch(
-                [f"http://{host}:{port}"],
-                basic_auth=(user, password)
-            )
+            self.es = Elasticsearch(f"http://{host}:{port}", basic_auth=(user, password))
         else:
-            self.es = Elasticsearch([f"http://{host}:{port}"])
+            self.es = Elasticsearch(f"http://{host}:{port}")
 
-        # Test connexion
         if not self.es.ping():
             raise ConnectionError(f"Impossible de se connecter à Elasticsearch sur {host}:{port}")
 
         info = self.es.info()
-        logger.info(f"Connecté à Elasticsearch : {info['version']['number']}")
+        logger.info(f"Connecté à Elasticsearch {info['version']['number']}")
 
     def create_accidents_index(self, index_name="accidents-routiers"):
-        """Crée l'index des accidents avec mapping optimisé"""
+        """Crée l'index des CARACTÉRISTIQUES des accidents (sans lieux!)"""
         if self.es.indices.exists(index=index_name):
-            logger.info(f"Index '{index_name}' existe déjà")
+            logger.info(f"Index {index_name} existe déjà")
             return
 
         mapping = {
             "mappings": {
                 "properties": {
+                    # Identifiants
                     "num_acc": {"type": "keyword"},
                     "timestamp": {"type": "date"},
+
+                    # Date/heure
                     "an": {"type": "integer"},
                     "mois": {"type": "integer"},
                     "jour": {"type": "integer"},
                     "heure": {"type": "integer"},
+
+                    # Localisation
                     "lat": {"type": "float"},
                     "long": {"type": "float"},
                     "coords": {"type": "geo_point"},
                     "dep": {"type": "keyword"},
                     "com": {"type": "keyword"},
+
+                    # Caractéristiques accident
                     "agg": {"type": "integer"},
                     "int": {"type": "integer"},
                     "atm": {"type": "integer"},
                     "col": {"type": "integer"},
                     "lum": {"type": "integer"},
-                    "catr": {"type": "integer"},
-                    "circ": {"type": "integer"},
-                    "nbv": {"type": "integer"},
-                    "vosp": {"type": "integer"},
-                    "prof": {"type": "integer"},
-                    "plan": {"type": "integer"},
-                    "surf": {"type": "integer"},
-                    "infra": {"type": "integer"},
-                    "situ": {"type": "integer"},
-                    "vma": {"type": "integer"},
-                    "adr": {"type": "text"},
-                    "voie": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
-                    "larrout": {"type": "text"},
-                    "pr": {"type": "text"},
-                    "v1": {"type": "text"},
-                    "v2": {"type": "text"},
-                    "lartpc": {"type": "text"},
+
+                    # Infrastructure (Overpass)
                     "infrastructure_env": {
                         "properties": {
                             "radars": {"type": "integer"},
@@ -82,13 +70,54 @@ class ElasticPusher:
         }
 
         self.es.indices.create(index=index_name, body=mapping)
-        logger.info(f"Index '{index_name}' créé")
+        logger.info(f"Index {index_name} créé")
 
+    def create_lieux_index(self, index_name="accidents-lieux"):
+        """Crée l'index des LIEUX (séparé des caractéristiques!)"""
+        if self.es.indices.exists(index=index_name):
+            logger.info(f"Index {index_name} existe déjà")
+            return
+
+        mapping = {
+            "mappings": {
+                "properties": {
+                    # Lien avec accident
+                    "num_acc": {"type": "keyword"},
+
+                    # Caractéristiques du lieu
+                    "catr": {"type": "integer"},
+                    "circ": {"type": "integer"},
+                    "nbv": {"type": "integer"},
+                    "vosp": {"type": "integer"},
+                    "prof": {"type": "integer"},
+                    "plan": {"type": "integer"},
+                    "surf": {"type": "integer"},
+                    "infra": {"type": "integer"},
+                    "situ": {"type": "integer"},
+                    "vma": {"type": "integer"},
+
+                    # Adresse et voie
+                    "adr": {"type": "text"},
+                    "voie": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
+                    "v1": {"type": "text"},
+                    "v2": {"type": "text"},
+
+                    # Route
+                    "larrout": {"type": "float"},
+                    "pr": {"type": "float"},
+                    "pr1": {"type": "float"},
+                    "lartpc": {"type": "float"}
+                }
+            }
+        }
+
+        self.es.indices.create(index=index_name, body=mapping)
+        logger.info(f"Index {index_name} créé (NOUVEAU)")
 
     def create_vehicules_index(self, index_name="accidents-vehicules"):
         """Crée l'index des véhicules"""
         if self.es.indices.exists(index=index_name):
-            logger.info(f"Index '{index_name}' existe déjà")
+            logger.info(f"Index {index_name} existe déjà")
             return
 
         mapping = {
@@ -110,12 +139,12 @@ class ElasticPusher:
         }
 
         self.es.indices.create(index=index_name, body=mapping)
-        logger.info(f"Index '{index_name}' créé")
+        logger.info(f"Index {index_name} créé")
 
     def create_usagers_index(self, index_name="accidents-usagers"):
         """Crée l'index des usagers"""
         if self.es.indices.exists(index=index_name):
-            logger.info(f"Index '{index_name}' existe déjà")
+            logger.info(f"Index {index_name} existe déjà")
             return
 
         mapping = {
@@ -128,7 +157,7 @@ class ElasticPusher:
                     "catu": {"type": "integer"},
                     "grav": {"type": "integer"},
                     "sexe": {"type": "integer"},
-                    "an_nais": {"type": "integer"},
+                    "annais": {"type": "integer"},
                     "age": {"type": "integer"},
                     "trajet": {"type": "integer"},
                     "secu1": {"type": "integer"},
@@ -142,7 +171,7 @@ class ElasticPusher:
         }
 
         self.es.indices.create(index=index_name, body=mapping)
-        logger.info(f"Index '{index_name}' créé")
+        logger.info(f"Index {index_name} créé")
 
     def push_documents(self, documents, index_name):
         """Envoie des documents vers un index spécifique"""
@@ -152,7 +181,7 @@ class ElasticPusher:
         actions = [
             {
                 "_index": index_name,
-                "_id": doc.get("num_acc") if index_name == "accidents-routiers" else None,
+                "_id": doc.get("num_acc") if "accidents" in index_name or "lieux" in index_name else None,
                 "_source": doc
             }
             for doc in documents
@@ -160,4 +189,5 @@ class ElasticPusher:
 
         success, failed = helpers.bulk(self.es, actions, stats_only=True, raise_on_error=False)
         logger.debug(f"{index_name}: {success} OK, {failed} KO")
+
         return success, failed
