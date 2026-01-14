@@ -1,6 +1,7 @@
 import os
 import glob
 import logging
+import numpy as np
 import pandas as pd
 from charset_normalizer import from_path
 from joblib import Parallel, delayed, dump, load, hash as joblibhash
