@@ -51,8 +51,7 @@ class BAACLoader:
 
     def _load_and_clean_accidents(self, year):
         """Charge et nettoie les accidents d'une année"""
-        # Glob simple pour trouver le fichier
-        files = list(self.data_dir.glob(f"*caract*{year}*.csv"))
+        files = list(self.data_dir.glob(f"{year}/*caracteristiques*{year}*.csv"))
 
         if not files:
             logger.warning(f"Fichier caractéristiques {year} manquant")
@@ -117,7 +116,7 @@ class BAACLoader:
 
     def _load_and_clean_vehicules(self, year):
         """Charge et nettoie les véhicules d'une année"""
-        files = list(self.data_dir.glob(f"*vehicule*{year}*.csv"))
+        files = list(self.data_dir.glob(f"{year}/*vehicule*{year}*.csv"))
 
         if not files:
             logger.warning(f"Fichier véhicules {year} manquant")
@@ -143,7 +142,7 @@ class BAACLoader:
 
     def _load_and_clean_usagers(self, year):
         """Charge et nettoie les usagers d'une année"""
-        files = list(self.data_dir.glob(f"*usager*{year}*.csv"))
+        files = list(self.data_dir.glob(f"{year}/*usager*{year}*.csv"))
 
         if not files:
             logger.warning(f"Fichier usagers {year} manquant")
