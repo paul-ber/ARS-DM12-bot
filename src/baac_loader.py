@@ -146,18 +146,18 @@ class BAACLoader:
     def process_coordinates(self, df):
         """
         Nettoie et valide les coordonnées GPS avec support multi-format.
-
-        Formats supportés :
-        - 2019-2024 : Décimal avec virgule "48,8962100" ou point "48.8962100"
-        - 2005-2018 : Format compacté 7 chiffres "4515400" = 45.15400°
-                    Support négatif "-082600" = -0.82600°
-        - Valeurs invalides : 0, chaînes vides, hors plage → np.nan
-
-        Returns:
-            DataFrame avec colonnes lat/long nettoyées et validées
+        VERSION DEBUG avec logs détaillés.
         """
 
-        def parse_gps_coordinate(value):
+        # LOG : Échantillon des données brutes AVANT traitement
+        if "lat" in df.columns and "long" in df.columns:
+            logger.info("=" * 80)
+            logger.info("DEBUG GPS - Échantillon AVANT traitement:")
+            sample = df[["num_acc", "lat", "long"]].head(10)
+            for idx, row in sample.iterrows():
+                logger.info(f"  {row['num_acc']} | lat={row['lat']!r} (type:{type(row['lat']).__name__}) | long={row['long']!r} (type:{type(row['long']).__name__})")
+
+        def parse_gps_coordinate(value, coord_name="", num_acc=""):
             """Parse une coordonnée GPS selon son format."""
             if pd.isna(value):
                 return np.nan
@@ -165,8 +165,12 @@ class BAACLoader:
             # Convertir en string et nettoyer
             str_val = str(value).strip()
 
+            # LOG: Valeur d'entrée
+            logger.debug(f"[{num_acc}][{coord_name}] Input: {value!r} -> str: '{str_val}'")
+
             # Gérer les valeurs vides ou nulles explicites
             if not str_val or str_val.lower() in ['nan', 'none', '', '0']:
+                logger.debug(f"[{num_acc}][{coord_name}] -> REJECTED (empty or zero)")
                 return np.nan
 
             # Format moderne (2019+) : nombre avec séparateur décimal
@@ -174,66 +178,97 @@ class BAACLoader:
                 str_val = str_val.replace(',', '.')
                 try:
                     coord = float(str_val)
-                    # Validation stricte : rejeter zéros et valeurs hors plage
                     if coord == 0.0 or abs(coord) > 90:
+                        logger.debug(f"[{num_acc}][{coord_name}] -> REJECTED modern format (zero or >90): {coord}")
                         return np.nan
+                    logger.debug(f"[{num_acc}][{coord_name}] -> OK modern: {coord}")
                     return coord
                 except ValueError:
+                    logger.debug(f"[{num_acc}][{coord_name}] -> REJECTED (ValueError)")
                     return np.nan
 
-            # Format ancien (2005-2018) : entier compacté DDMMMMM (7 chiffres)
+            # Format ancien (2005-2018) : entier compacté DDMMMMM
             is_negative = str_val.startswith('-')
             if is_negative:
-                digits = str_val[1:]  # Retirer le signe
+                digits = str_val[1:]
             else:
                 digits = str_val
 
             # Ne conserver que les chiffres
             digits = ''.join(ch for ch in digits if ch.isdigit())
+            logger.debug(f"[{num_acc}][{coord_name}] Digits after cleaning: '{digits}' (len={len(digits)})")
 
             # Si vide ou que des zéros, c'est invalide
             if not digits or all(ch == '0' for ch in digits):
+                logger.debug(f"[{num_acc}][{coord_name}] -> REJECTED (all zeros)")
                 return np.nan
 
-            # Padding à 7 chiffres (format standard BAAC : DDMMMMM)
-            # Exemple : -82600 devient 0082600, puis 00.82600
+            # Padding à 7 chiffres
             if len(digits) < 7:
+                original_digits = digits
                 digits = digits.zfill(7)
+                logger.debug(f"[{num_acc}][{coord_name}] Padded: '{original_digits}' -> '{digits}'")
 
             # Format BAAC : DDMMMMM (2 chiffres degrés + 5 chiffres décimales)
             degrees = digits[:2]
-            decimals = digits[2:7]  # Prendre exactement 5 décimales
+            decimals = digits[2:7]
 
             try:
                 coord = float(f"{degrees}.{decimals}")
             except ValueError:
+                logger.debug(f"[{num_acc}][{coord_name}] -> REJECTED (ValueError on format)")
                 return np.nan
 
-            # Validation stricte : rejeter valeurs aberrantes
-            # Latitude max 90°, longitude max 180° (on teste latitude ici)
+            # Validation stricte
             if coord == 0.0 or coord > 90:
+                logger.debug(f"[{num_acc}][{coord_name}] -> REJECTED ancient format (zero or >90): {coord}")
                 return np.nan
 
-            return -coord if is_negative else coord
+            final_coord = -coord if is_negative else coord
+            logger.debug(f"[{num_acc}][{coord_name}] -> OK ancient: {final_coord}")
+            return final_coord
 
-        # Traiter latitude
+        # Traiter latitude avec logging
         if "lat" in df.columns:
-            df["lat"] = df["lat"].apply(parse_gps_coordinate)
+            logger.info("Processing LATITUDE...")
+            # Appliquer la fonction avec les métadonnées pour debug
+            results = []
+            for idx, row in df.iterrows():
+                num_acc = row.get('num_acc', f'row_{idx}')
+                result = parse_gps_coordinate(row['lat'], 'LAT', num_acc)
+                results.append(result)
+                # Log seulement les 20 premières lignes pour pas spammer
+                if idx >= 20:
+                    break
+            df["lat"] = df["lat"].apply(lambda x: parse_gps_coordinate(x, 'LAT', ''))
         else:
             df["lat"] = np.nan
 
         # Traiter longitude
         if "long" in df.columns:
-            df["long"] = df["long"].apply(parse_gps_coordinate)
+            logger.info("Processing LONGITUDE...")
+            df["long"] = df["long"].apply(lambda x: parse_gps_coordinate(x, 'LONG', ''))
         else:
             df["long"] = np.nan
 
-        # Validation finale : supprimer les coordonnées aberrantes ou incomplètes
-        # IMPORTANT : Ne pas rejeter les coordonnées proches de 0 (méridien Greenwich)
+        # LOG : Échantillon des données APRÈS traitement
+        if "lat" in df.columns and "long" in df.columns:
+            logger.info("DEBUG GPS - Échantillon APRÈS traitement:")
+            sample_after = df[["num_acc", "lat", "long"]].head(10)
+            for idx, row in sample_after.iterrows():
+                logger.info(f"  {row['num_acc']} | lat={row['lat']} | long={row['long']}")
+
+            # Statistiques
+            total = len(df)
+            with_coords = df[df['lat'].notna() & df['long'].notna()].shape[0]
+            logger.info(f"STATS: {with_coords}/{total} accidents avec coordonnées ({100*with_coords/total:.1f}%)")
+            logger.info("=" * 80)
+
+        # Validation finale
         if "lat" in df.columns and "long" in df.columns:
             mask_invalid = (
-                df["lat"].isna() | df["long"].isna() |  # Valeurs manquantes
-                (df["lat"].abs() > 90) | (df["long"].abs() > 180)  # Hors plage
+                df["lat"].isna() | df["long"].isna() |
+                (df["lat"].abs() > 90) | (df["long"].abs() > 180)
             )
             df.loc[mask_invalid, ["lat", "long"]] = np.nan
 
