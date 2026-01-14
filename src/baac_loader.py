@@ -145,65 +145,74 @@ class BAACLoader:
 
     def process_coordinates(self, df):
         """
-        Nettoie et valide les coordonnées GPS avec support des formats historiques.
+        Nettoie et valide les coordonnées GPS avec support multi-format.
 
-        Formats supportés:
-        - 2019-2024: Décimal avec virgule (ex: "47,56277000")
-        - 2005-2018: Format compacté 7 chiffres (ex: "5055737" = 50.55737)
-                    avec support du signe négatif (ex: "-082600" = -0.82600)
+        Formats supportés :
+        - 2019-2024 : Décimal avec virgule "48,8962100" ou point "48.8962100"
+        - 2005-2018 : Format compacté 7 chiffres "4515400" = 45.15400°
+                    Support négatif "-082600" = -0.82600°
+        - Valeurs invalides : 0, chaînes vides, hors plage → np.nan
+
+        Returns:
+            DataFrame avec colonnes lat/long nettoyées et validées
         """
 
         def parse_gps_coordinate(value):
-            """Parse une coordonnée GPS selon son format"""
+            """Parse une coordonnée GPS selon son format."""
             if pd.isna(value):
                 return np.nan
 
             # Convertir en string et nettoyer
             str_val = str(value).strip()
 
-            # Gérer les valeurs vides
-            if not str_val or str_val.lower() in ['nan', 'none', '']:
+            # Gérer les valeurs vides ou nulles explicites
+            if not str_val or str_val.lower() in ['nan', 'none', '', '0']:
                 return np.nan
 
-            # Format moderne (2019+): nombre avec virgule décimale
+            # Format moderne (2019+) : nombre avec séparateur décimal
             if ',' in str_val or '.' in str_val:
-                # Remplacer virgule par point
                 str_val = str_val.replace(',', '.')
                 try:
-                    return float(str_val)
+                    coord = float(str_val)
+                    # Validation stricte : rejeter zéros et valeurs hors plage
+                    if coord == 0.0 or abs(coord) > 90:
+                        return np.nan
+                    return coord
                 except ValueError:
                     return np.nan
 
-            # Format ancien (2005-2018): 7 chiffres compactés
-            # Gérer le signe négatif
+            # Format ancien (2005-2018) : entier compacté DDMMMMM (7 chiffres)
             is_negative = str_val.startswith('-')
             if is_negative:
-                digits = str_val[1:]  # Retirer le signe pour traitement
+                digits = str_val[1:]  # Retirer le signe
             else:
                 digits = str_val
 
-            # Ne conserver que les chiffres (au cas où)
+            # Ne conserver que les chiffres
             digits = ''.join(ch for ch in digits if ch.isdigit())
 
-            # Si vide après suppression des non-chiffres, c'est 0
-            if not digits:
-                return 0.0
+            # Si vide ou que des zéros, c'est invalide
+            if not digits or all(ch == '0' for ch in digits):
+                return np.nan
 
-            # Pour le format compacté historique, on s'attend à au moins 6 chiffres ;
-            # si c'est moins, tenter de retrouver le format en complétant à gauche avec des zéros
-            if len(digits) < 6:
-                digits = digits.zfill(6)
+            # Padding à 7 chiffres (format standard BAAC : DDMMMMM)
+            # Exemple : -82600 devient 0082600, puis 00.82600
+            if len(digits) < 7:
+                digits = digits.zfill(7)
 
-            # Format: DDMMMMM (2 degrés + 5 décimales) mais si 6 chiffres => 1 degré + 5 décimales
-            if len(digits) == 6:
-                # Cas spécial: 082600 -> 0.82600
-                degrees = digits[:1]
-                decimals = digits[1:]
-            else:
-                degrees = digits[:2]
-                decimals = digits[2:]
+            # Format BAAC : DDMMMMM (2 chiffres degrés + 5 chiffres décimales)
+            degrees = digits[:2]
+            decimals = digits[2:7]  # Prendre exactement 5 décimales
 
-            coord = float(f"{degrees}.{decimals}")
+            try:
+                coord = float(f"{degrees}.{decimals}")
+            except ValueError:
+                return np.nan
+
+            # Validation stricte : rejeter valeurs aberrantes
+            # Latitude max 90°, longitude max 180° (on teste latitude ici)
+            if coord == 0.0 or coord > 90:
+                return np.nan
 
             return -coord if is_negative else coord
 
@@ -219,14 +228,14 @@ class BAACLoader:
         else:
             df["long"] = np.nan
 
-        # Validation: supprimer les coordonnées aberrantes
+        # Validation finale : supprimer les coordonnées aberrantes ou incomplètes
+        # IMPORTANT : Ne pas rejeter les coordonnées proches de 0 (méridien Greenwich)
         if "lat" in df.columns and "long" in df.columns:
-            mask_aberrant = (
-                (df["lat"] == 0) | (df["long"] == 0) |
-                (df["lat"].isna()) | (df["long"].isna()) |
-                (df["lat"].abs() > 90) | (df["long"].abs() > 180)
+            mask_invalid = (
+                df["lat"].isna() | df["long"].isna() |  # Valeurs manquantes
+                (df["lat"].abs() > 90) | (df["long"].abs() > 180)  # Hors plage
             )
-            df.loc[mask_aberrant, ["lat", "long"]] = np.nan
+            df.loc[mask_invalid, ["lat", "long"]] = np.nan
 
         return df
 
