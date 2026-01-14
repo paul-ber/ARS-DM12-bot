@@ -234,14 +234,14 @@ class BAACLoader:
                 cached_signature = f.read().strip()
 
             if cached_signature == current_signature:
-                logger.info("✅ Cache BAAC complet trouvé, chargement rapide...")
+                logger.info("Cache BAAC complet trouvé, chargement rapide...")
                 data = load(self.cache_file)
-                logger.info(f"📦 {len(data['accidents'])} accidents, {len(data['lieux'])} lieux chargés")
+                logger.info(f"{len(data['accidents'])} accidents, {len(data['lieux'])} lieux chargés")
                 return data
             else:
-                logger.info("⚠️ Cache obsolète, rechargement...")
+                logger.info("Cache obsolète, rechargement...")
         else:
-            logger.info("🔄 Pas de cache, chargement complet...")
+            logger.info("Pas de cache, chargement complet...")
 
         year_dirs = glob.glob(os.path.join(self.data_dir, "[12]0[0-9][0-9]"))
         years = sorted([int(os.path.basename(d)) for d in year_dirs])

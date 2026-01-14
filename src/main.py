@@ -137,7 +137,7 @@ def mode_import(args):
         return
 
     # [4/6] ENVOI ACCIDENTS
-    logger.info(f"[4/6] Envoi des accidents...")
+    logger.info(f"[4/6] Envoi des accidents (caractéristiques)...")
     batch_acc = []
     for _, row in tqdm(df_accidents.iterrows(), total=len(df_accidents), desc="Accidents"):
         doc = convert_to_json_serializable(row.to_dict())
@@ -148,11 +148,11 @@ def mode_import(args):
         batch_acc.append(doc)
 
         if len(batch_acc) >= args.batch_size:
-            pusher.push_documents(batch_acc, "accidents-routiers")
+            pusher.push_documents(batch_acc, "accidents-caracteristiques")
             batch_acc = []
 
     if batch_acc:
-        pusher.push_documents(batch_acc, "accidents-routiers")
+        pusher.push_documents(batch_acc, "accidents-caracteristiques")
 
     # [5/6] ENVOI LIEUX
     logger.info(f"[5/6] Envoi des lieux...")
@@ -212,7 +212,7 @@ def mode_import(args):
     logger.info("=" * 60)
 
     if not args.skip_overpass:
-        logger.info("\Pour enrichir avec Overpass:")
+        logger.info("Pour enrichir avec Overpass:")
         logger.info("python src/main.py --enrich-only --send-elk --overpass-min-year 2022 --overpass-workers 20")
 
 def main():
