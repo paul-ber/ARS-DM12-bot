@@ -17,7 +17,7 @@ class ElasticPusher:
         info = self.es.info()
         logger.info(f"Connecté à Elasticsearch {info['version']['number']}")
 
-    def create_accidents_index(self, index_name="accidents-routiers"):
+    def create_accidents_index(self, index_name="accidents-caracteristiques"):
         """Crée l'index des CARACTÉRISTIQUES des accidents (sans lieux!)"""
         if self.es.indices.exists(index=index_name):
             logger.info(f"Index {index_name} existe déjà")

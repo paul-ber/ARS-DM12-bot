@@ -13,7 +13,6 @@ from enrichment_processor import EnrichmentProcessor, get_accidents_to_enrich, u
 
 load_dotenv()
 
-
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 LOG_FILE = os.path.join(LOG_DIR, "bot.log")
