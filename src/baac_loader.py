@@ -3,7 +3,6 @@ import os
 import logging
 from joblib import Memory, Parallel, delayed
 from pathlib import Path
-import glob
 
 logger = logging.getLogger("DM12")
 
@@ -15,23 +14,6 @@ class BAACLoader:
         self.cache_dir = Path(cache_dir)
         os.makedirs(self.cache_dir, exist_ok=True)
         self.memory = Memory(self.cache_dir, verbose=0)
-
-    def _find_file(self, pattern, year):
-        """Trouve un fichier correspondant au pattern pour une année donnée"""
-        # Patterns possibles
-        patterns = [
-            f"*{pattern}*{year}*.csv",
-            f"*{pattern}*-{year}.csv",
-            f"{pattern}-{year}.csv",
-            f"*{year}*{pattern}*.csv"
-        ]
-
-        for p in patterns:
-            files = list(self.data_dir.glob(p))
-            if files:
-                return files[0]
-
-        return None
 
     def _parse_gps_coordinate(self, value):
         """
@@ -61,38 +43,6 @@ class BAACLoader:
         except:
             return None
 
-    def _clean_numeric_field(self, value, field_name):
-        """
-        Nettoie les champs numériques qui peuvent contenir :
-        - Espaces : " -1" → -1 ou "1 050" → 1050
-        - Virgules : "5,5" → 5.5
-        - Valeurs invalides : "(1)", "sans", "#VALEURMULTI" → None
-        """
-        if pd.isna(value) or value == '':
-            return None
-
-        value_str = str(value).strip()
-
-        # Valeurs spéciales à rejeter
-        if value_str in ['(1)', 'sans', 'N/A', '-'] or value_str.startswith('#'):
-            return None
-
-        # Supprimer TOUS les espaces (y compris dans "1 050")
-        value_str = value_str.replace(' ', '')
-
-        # Remplacer virgule par point
-        value_str = value_str.replace(',', '.')
-
-        try:
-            num = float(value_str)
-            # Convertir -1 en None (valeur manquante dans BAAC)
-            if num == -1:
-                return None
-            return num
-        except:
-            logger.debug(f"Impossible de parser {field_name}='{value}' → None")
-            return None
-
     def _clean_text_field(self, value):
         """Nettoie les champs texte"""
         if pd.isna(value) or value == '':
@@ -101,30 +51,21 @@ class BAACLoader:
 
     def _load_and_clean_accidents(self, year):
         """Charge et nettoie les accidents d'une année"""
-        # Recherche flexible du fichier
-        file_path = self._find_file("caracteristiques", year)
+        # Glob simple pour trouver le fichier
+        files = list(self.data_dir.glob(f"*caract*{year}*.csv"))
 
-        if not file_path:
-            logger.warning(f"❌ Fichier caractéristiques-{year} introuvable")
+        if not files:
+            logger.warning(f"Fichier caractéristiques {year} manquant")
             return pd.DataFrame()
+
+        file_path = files[0]
 
         try:
             df = pd.read_csv(file_path, sep=';', encoding='utf-8', low_memory=False)
 
-            # Renommer colonnes si besoin (case insensitive)
-            df.columns = df.columns.str.lower()
-            rename_map = {
-                'num_acc': 'num_acc',
-                'an': 'an', 'mois': 'mois', 'jour': 'jour',
-                'heure': 'heure', 'minute': 'minute',
-                'lat': 'lat', 'long': 'long',
-                'dep': 'dep', 'com': 'com',
-                'adr': 'adr', 'gps': 'gps',
-                'lartpc': 'lartpc', 'larrout': 'larrout',
-                'voie': 'voie', 'v1': 'v1', 'v2': 'v2',
-                'pr': 'pr', 'pr1': 'pr1', 'nbv': 'nbv'
-            }
-            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+            # Renommer colonnes si besoin
+            if 'Num_Acc' in df.columns:
+                df = df.rename(columns={'Num_Acc': 'num_acc'})
 
             # Normaliser num_acc
             if 'num_acc' in df.columns:
@@ -136,17 +77,19 @@ class BAACLoader:
             if 'long' in df.columns:
                 df['long'] = df['long'].apply(self._parse_gps_coordinate)
 
-            # Nettoyer champs numériques problématiques
-            numeric_fields = ['larrout', 'lartpc', 'pr', 'pr1']
-            for field in numeric_fields:
-                if field in df.columns:
-                    df[field] = df[field].apply(lambda x: self._clean_numeric_field(x, field))
-
-            # Nettoyer nbv (peut contenir #VALEURMULTI)
+            # Nettoyer nbv : remplacer #VALEURMULTI par None
             if 'nbv' in df.columns:
-                df['nbv'] = df['nbv'].apply(lambda x: None if str(x).startswith('#') else x)
+                df['nbv'] = df['nbv'].apply(lambda x: None if str(x).strip() == '#VALEURMULTI' else x)
+                df['nbv'] = pd.to_numeric(df['nbv'], errors='coerce')
 
-            # Nettoyer champs texte (voie peut être numérique ou texte selon l'année)
+            # Nettoyer champs texte/numériques gardés en texte dans ELK
+            text_numeric_fields = ['larrout', 'lartpc', 'pr', 'pr1']
+            for field in text_numeric_fields:
+                if field in df.columns:
+                    df[field] = df[field].apply(lambda x: str(x).strip().replace(' ', '').replace(',', '.') if pd.notna(x) and str(x).strip() != '' else None)
+                    df[field] = df[field].apply(lambda x: None if x in ['(1)', '-1', 'nan', 'None'] else x)
+
+            # Nettoyer champs texte
             text_fields = ['voie', 'v1', 'v2', 'adr']
             for field in text_fields:
                 if field in df.columns:
@@ -169,52 +112,50 @@ class BAACLoader:
             return df
 
         except Exception as e:
-            logger.error(f"❌ Erreur lors du chargement de {year}: {e}")
+            logger.error(f"Erreur lors du chargement de {year}: {e}")
             return pd.DataFrame()
 
     def _load_and_clean_vehicules(self, year):
         """Charge et nettoie les véhicules d'une année"""
-        # Recherche flexible du fichier
-        file_path = self._find_file("vehicules", year)
+        files = list(self.data_dir.glob(f"*vehicule*{year}*.csv"))
 
-        if not file_path:
-            logger.warning(f"❌ Fichier véhicules-{year} introuvable")
+        if not files:
+            logger.warning(f"Fichier véhicules {year} manquant")
             return pd.DataFrame()
+
+        file_path = files[0]
 
         try:
             df = pd.read_csv(file_path, sep=';', encoding='utf-8', low_memory=False)
 
-            # Renommer colonnes (case insensitive)
-            df.columns = df.columns.str.lower()
-            rename_map = {'num_acc': 'num_acc'}
-            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+            if 'Num_Acc' in df.columns:
+                df = df.rename(columns={'Num_Acc': 'num_acc'})
 
             if 'num_acc' in df.columns:
                 df['num_acc'] = df['num_acc'].astype(str)
 
-            logger.debug(f"✅ {year}: {len(df):,} véhicules")
+            logger.debug(f"{year}: {len(df):,} véhicules")
             return df
 
         except Exception as e:
-            logger.error(f"❌ Erreur véhicules {year}: {e}")
+            logger.error(f"Erreur véhicules {year}: {e}")
             return pd.DataFrame()
 
     def _load_and_clean_usagers(self, year):
         """Charge et nettoie les usagers d'une année"""
-        # Recherche flexible du fichier
-        file_path = self._find_file("usagers", year)
+        files = list(self.data_dir.glob(f"*usager*{year}*.csv"))
 
-        if not file_path:
-            logger.warning(f"❌ Fichier usagers-{year} introuvable")
+        if not files:
+            logger.warning(f"Fichier usagers {year} manquant")
             return pd.DataFrame()
+
+        file_path = files[0]
 
         try:
             df = pd.read_csv(file_path, sep=';', encoding='utf-8', low_memory=False)
 
-            # Renommer colonnes (case insensitive)
-            df.columns = df.columns.str.lower()
-            rename_map = {'num_acc': 'num_acc'}
-            df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
+            if 'Num_Acc' in df.columns:
+                df = df.rename(columns={'Num_Acc': 'num_acc'})
 
             if 'num_acc' in df.columns:
                 df['num_acc'] = df['num_acc'].astype(str)
@@ -227,11 +168,11 @@ class BAACLoader:
                 df.loc[df['age'] < 0, 'age'] = None
                 df.loc[df['age'] > 120, 'age'] = None
 
-            logger.debug(f"✅ {year}: {len(df):,} usagers")
+            logger.debug(f"{year}: {len(df):,} usagers")
             return df
 
         except Exception as e:
-            logger.error(f"❌ Erreur usagers {year}: {e}")
+            logger.error(f"Erreur usagers {year}: {e}")
             return pd.DataFrame()
 
     def load_all_years(self, years=None, n_jobs=10, force_reload=False):
@@ -248,14 +189,14 @@ class BAACLoader:
 
         if force_reload:
             self.memory.clear(warn=False)
-            logger.info("♻️  Cache joblib vidé")
+            logger.info("Cache joblib vidé")
 
         # Wrapper pour cache
         load_acc_cached = self.memory.cache(self._load_and_clean_accidents)
         load_veh_cached = self.memory.cache(self._load_and_clean_vehicules)
         load_usr_cached = self.memory.cache(self._load_and_clean_usagers)
 
-        logger.info(f"📦 Chargement de {len(years)} années ({n_jobs} workers)...")
+        logger.info(f"Chargement de {len(years)} années ({n_jobs} workers)...")
 
         # Chargement parallèle
         accidents_list = Parallel(n_jobs=n_jobs, backend='loky')(
@@ -270,22 +211,12 @@ class BAACLoader:
             delayed(load_usr_cached)(year) for year in years
         )
 
-        # Filtrer les DataFrames vides
-        accidents_list = [df for df in accidents_list if not df.empty]
-        vehicules_list = [df for df in vehicules_list if not df.empty]
-        usagers_list = [df for df in usagers_list if not df.empty]
-
-        # Vérifier qu'on a des données
-        if not accidents_list:
-            logger.error("❌ Aucun fichier d'accidents trouvé !")
-            raise ValueError("Aucune donnée d'accidents chargée")
-
         # Concaténation
-        df_accidents = pd.concat(accidents_list, ignore_index=True)
-        df_vehicules = pd.concat(vehicules_list, ignore_index=True) if vehicules_list else pd.DataFrame()
-        df_usagers = pd.concat(usagers_list, ignore_index=True) if usagers_list else pd.DataFrame()
+        df_accidents = pd.concat([df for df in accidents_list if not df.empty], ignore_index=True)
+        df_vehicules = pd.concat([df for df in vehicules_list if not df.empty], ignore_index=True)
+        df_usagers = pd.concat([df for df in usagers_list if not df.empty], ignore_index=True)
 
-        logger.info(f"✅ Total chargé : {len(df_accidents):,} accidents, "
+        logger.info(f"Total chargé : {len(df_accidents):,} accidents, "
                    f"{len(df_vehicules):,} véhicules, {len(df_usagers):,} usagers")
 
         return {

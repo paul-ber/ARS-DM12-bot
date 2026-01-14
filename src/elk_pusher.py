@@ -57,14 +57,12 @@ class ElasticPusher:
                     "situ": {"type": "integer"},
                     "vma": {"type": "integer"},
                     "adr": {"type": "text"},
-
                     "voie": {"type": "text", "fields": {"keyword": {"type": "keyword"}}},
                     "larrout": {"type": "text"},
                     "pr": {"type": "text"},
                     "v1": {"type": "text"},
                     "v2": {"type": "text"},
                     "lartpc": {"type": "text"},
-
                     "infrastructure_env": {
                         "properties": {
                             "radars": {"type": "integer"},
