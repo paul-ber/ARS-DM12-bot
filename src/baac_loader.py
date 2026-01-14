@@ -153,7 +153,7 @@ class BAACLoader:
                     avec support du signe négatif (ex: "-082600" = -0.82600)
         """
 
-        def parse_gps_coordinate(value):
+        def parse_gps_coordinate(self, value):
             """Parse une coordonnée GPS selon son format"""
             if pd.isna(value):
                 return np.nan
