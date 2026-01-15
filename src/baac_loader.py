@@ -111,21 +111,74 @@ class BAACLoader:
 
     def process_timestamp(self, df, year):
         """Crée un timestamp propre à partir des colonnes temporelles"""
-        if "hrmn" in df.columns:
-            df["hrmn"] = df["hrmn"].fillna("00:00").astype(str).str.replace(":", "").str.zfill(4)
-            mask_valid_hrmn = df["hrmn"].str.match(r"[0-1]?[0-9][2-3][0-5][0-9]", na=False)
-            df.loc[~mask_valid_hrmn, "hrmn"] = "0000"
-            df["heure"] = df["hrmn"].str[:2].astype(int)
-            df["minute"] = df["hrmn"].str[2:].astype(int)
-        else:
-            df["heure"] = 0
-            df["minute"] = 0
 
+        def parse_hrmn(value):
+            """
+            Parse le champ hrmn (heure/minute) multi-format.
+            Returns: "hh:mm" ou None si invalide
+            """
+            if pd.isna(value):
+                return None
+
+            # Convertir float en int (évite le .0)
+            if isinstance(value, float):
+                if value < 1.0:
+                    return None
+                value = int(value)
+
+            str_val = str(value).strip()
+
+            if not str_val or str_val in ['0', 'nan', 'none']:
+                return None
+
+            # Format moderne avec ":" : split direct
+            if ':' in str_val:
+                parts = str_val.replace(' ', '').split(':')
+                if len(parts) != 2:
+                    return None
+                try:
+                    hh, mm = int(parts[0]), int(parts[1])
+                except ValueError:
+                    return None
+            else:
+                # Format ancien : extraire chiffres et padding
+                digits = ''.join(ch for ch in str_val if ch.isdigit())
+                if not digits:
+                    return None
+
+                # Padding à 4 chiffres : "45" -> "0045"
+                digits = digits.zfill(4)
+                if len(digits) > 4:
+                    return None
+
+                try:
+                    hh, mm = int(digits[:2]), int(digits[2:4])
+                except ValueError:
+                    return None
+
+            # Validation unique
+            if not (0 <= hh <= 23 and 0 <= mm <= 59):
+                return None
+
+            return f"{hh:02d}:{mm:02d}"
+
+        # Traiter hrmn
+        if "hrmn" in df.columns:
+            df["hrmn"] = df["hrmn"].apply(parse_hrmn).fillna("00:00")
+        else:
+            df["hrmn"] = "00:00"
+
+        # Extraire heure/minute
+        df["heure"] = df["hrmn"].str[:2].astype(int)
+        df["minute"] = df["hrmn"].str[3:5].astype(int)
+
+        # Traiter année
         if "an" in df.columns:
             df["an"] = df["an"].apply(lambda x: x + 2000 if x < 100 else x)
         else:
             df["an"] = year
 
+        # Créer timestamp
         if all(c in df.columns for c in ["an", "mois", "jour", "heure", "minute"]):
             df["timestamp"] = (
                 pd.to_datetime(
@@ -142,6 +195,7 @@ class BAACLoader:
             df["timestamp"] = pd.NaT
 
         return df
+
 
     def process_coordinates(self, df):
         """
